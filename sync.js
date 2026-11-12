@@ -12,7 +12,7 @@
     appId: "1:155203374991:web:59ff3c078e911e6ce9c5fa"
   };
   const SDK = "https://www.gstatic.com/firebasejs/10.12.2/firebase-";
-  let auth, db, docRef = null, unsub = null, pushTimer = null;
+  let auth, db, docRef = null, unsub = null, pushTimer = null, retryTimer = null, retryDelay = 10000;
   const state = { user: null, status: "loading", message: "" };
   window.syncState = () => state;
   const changed = remote => window.RBR.onSyncChange(remote);
@@ -81,7 +81,7 @@
     clearTimeout(pushTimer);
     pushTimer = setTimeout(() => {
       state.status = "saving";
-      docRef.set(toCloud(window.RBR.getData()), { merge: true }).catch(fail);
+      docRef.set(toCloud(window.RBR.getData()), { merge: true }).catch(e => { fail(e); retryLater(); });
     }, 600);
   }
   window.syncPush = () => { if (docRef) push(); };
@@ -99,10 +99,21 @@
       const was = state.status;
       state.status = snap.metadata.fromCache ? "offline" : snap.metadata.hasPendingWrites ? "saving" : "synced";
       if (state.status !== "error") state.message = "";
+      retryDelay = 10000;
       if (any || was !== state.status) changed(any);
-    }, fail);
+    }, e => { fail(e); retryLater(); });
   }
-  function stop() { if (unsub) unsub(); unsub = null; docRef = null; clearTimeout(pushTimer); }
+  // Keep trying quietly after an error (no internet, setup not finished yet...), waiting longer each time.
+  function retryLater() {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => { const u = auth && auth.currentUser; if (u) start(u); }, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 120000);
+  }
+  document.addEventListener("visibilitychange", () => {
+    const u = auth && auth.currentUser;
+    if (document.visibilityState === "visible" && u && state.status === "error") { retryDelay = 10000; start(u); }
+  });
+  function stop() { if (unsub) unsub(); unsub = null; docRef = null; clearTimeout(pushTimer); clearTimeout(retryTimer); }
 
   window.syncSignIn = async () => {
     if (!auth) return;
