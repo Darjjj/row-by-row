@@ -22,18 +22,32 @@
   const strip = o => { const { t, ...rest } = o; return JSON.stringify(rest); };
   // Entries saved before syncing existed have no t: count them as very old (1), or 0 if untouched.
   const tOf = (o, sec) => o.t || (DEF[sec] === strip(o) ? 0 : 1);
+  const pos = o => (o.step || 0) * 1000 + (o.inrow || 0);   // how far along a place is
   function newer(a, b, sec) {          // > 0 when a should win over b
     const ta = tOf(a, sec), tb = tOf(b, sec);
-    if (ta !== tb) return ta - tb;
-    if (sec === "progress" && ta <= 1) return (a.step || 0) - (b.step || 0);   // two old copies: keep the further one
-    return 0;
+    if (sec === "progress") {
+      // The place further along wins, so a device that is behind can never wipe out real progress.
+      // The exception is a deliberate step back (Previous row, untapping, Go to row, Start over): it carries
+      // back = how far along it was before, and wins if it is newer and was made from at least that far along.
+      const f = pos(a) - pos(b);
+      if (f === 0) return ta - tb;
+      const ahead = f > 0 ? a : b, behind = f > 0 ? b : a;
+      const behindWins = behind.back >= pos(ahead) && tOf(behind, sec) > tOf(ahead, sec);
+      return (f > 0) !== behindWins ? 1 : -1;
+    }
+    return ta - tb;
   }
-  function mergeRemote(data, remote) {   // copy newer remote entries into data; returns true if anything changed
+  // first: this device is joining this account for the first time, so the cloud's style choices win.
+  function mergeRemote(data, remote, first) {   // copy winning remote entries into data; returns true if anything changed
     let any = false;
     for (const sec of ["progress", "prefs"]) {
       const r = remote[sec] || {};
       data[sec] = data[sec] || {};
-      for (const k in r) if (!data[sec][k] || newer(r[k], data[sec][k], sec) > 0) { data[sec][k] = r[k]; any = true; }
+      for (const k in r) {
+        const l = data[sec][k];
+        const take = !l || (first && sec === "prefs" ? strip(r[k]) !== strip(l) : newer(r[k], l, sec) > 0);
+        if (take) { data[sec][k] = r[k]; any = true; }
+      }
     }
     const rn = remote.notes || {};
     data.notes = data.notes || [];
@@ -45,22 +59,22 @@
     if (any) data.notes.sort((a, b) => a.id - b.id);
     return any;
   }
-  function needsPush(data, remote) {     // true if this device has something newer than the cloud
+  // Only the entries where this device's copy beats the cloud's, or null if there are none.
+  // Sending just these (with merge) means a device never overwrites a better copy in the cloud.
+  function toPush(data, remote) {
+    const out = { progress: {}, prefs: {}, notes: {} };
+    let any = false;
     for (const sec of ["progress", "prefs"]) for (const k in data[sec] || {}) {
       const r = (remote[sec] || {})[k], l = data[sec][k];
-      if (r ? newer(l, r, sec) > 0 : tOf(l, sec) > 0) return true;
+      if (r ? newer(l, r, sec) > 0 : tOf(l, sec) > 0) { out[sec][k] = l; any = true; }
     }
     for (const n of data.notes || []) {
       const r = (remote.notes || {})[String(n.id)];
-      if (!r || newer(n, r, "notes") > 0) return true;
+      if (!r || newer(n, r, "notes") > 0) { out.notes[String(n.id)] = n; any = true; }
     }
-    return false;
+    return any ? JSON.parse(JSON.stringify(out)) : null;
   }
-  function toCloud(data) {
-    const notes = {}; (data.notes || []).forEach(n => notes[String(n.id)] = n);
-    return JSON.parse(JSON.stringify({ progress: data.progress || {}, prefs: data.prefs || {}, notes }));
-  }
-  window.syncMergeRules = { mergeRemote, needsPush, toCloud };
+  window.syncMergeRules = { mergeRemote, toPush };
 
   // ----- messages -----
   function explain(e) {
@@ -76,12 +90,17 @@
   function fail(e) { state.status = "error"; state.message = explain(e); console.warn("sync:", e && (e.code || e.message)); changed(false); }
 
   // ----- syncing -----
+  // remote = the cloud copy from the latest snapshot; null until the server has answered,
+  // and nothing is sent before then, so a device never writes blind over the cloud.
+  let remote = null;
   function push() {
-    if (!docRef) return;
+    if (!docRef || !remote) return;
     clearTimeout(pushTimer);
     pushTimer = setTimeout(() => {
+      const out = remote && toPush(window.RBR.getData(), remote);
+      if (!docRef || !out) return;
       state.status = "saving";
-      docRef.set(toCloud(window.RBR.getData()), { merge: true }).catch(e => { fail(e); retryLater(); });
+      docRef.set(out, { merge: true }).catch(e => { fail(e); retryLater(); });
     }, 600);
   }
   window.syncPush = () => { if (docRef) push(); };
@@ -91,11 +110,17 @@
     docRef = db.doc(`users/${user.uid}/state/main`);
     state.status = "connecting"; state.message = ""; changed(false);
     unsub = docRef.onSnapshot({ includeMetadataChanges: true }, snap => {
+      if (snap.metadata.fromCache && !remote) {         // wait for the server's copy
+        if (state.status !== "offline") { state.status = "offline"; changed(false); }
+        return;
+      }
       const data = window.RBR.getData();
-      const remote = snap.exists ? snap.data() : {};
-      const any = mergeRemote(data, remote);
-      if (any) { window.RBR.resnap(); window.RBR.persist(); }   // store what arrived, without counting it as a new change
-      if (needsPush(data, remote)) push();
+      remote = snap.exists ? snap.data() : {};
+      const first = data.syncedWith !== user.uid;
+      const any = mergeRemote(data, remote, first);
+      if (first) data.syncedWith = user.uid;
+      if (any || first) { window.RBR.resnap(); window.RBR.persist(); }   // store what arrived, without counting it as a new change
+      if (toPush(data, remote)) push();
       const was = state.status;
       state.status = snap.metadata.fromCache ? "offline" : snap.metadata.hasPendingWrites ? "saving" : "synced";
       if (state.status !== "error") state.message = "";
@@ -113,7 +138,7 @@
     const u = auth && auth.currentUser;
     if (document.visibilityState === "visible" && u && state.status === "error") { retryDelay = 10000; start(u); }
   });
-  function stop() { if (unsub) unsub(); unsub = null; docRef = null; clearTimeout(pushTimer); clearTimeout(retryTimer); }
+  function stop() { if (unsub) unsub(); unsub = null; docRef = null; remote = null; clearTimeout(pushTimer); clearTimeout(retryTimer); }
 
   window.syncSignIn = async () => {
     if (!auth) return;

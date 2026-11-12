@@ -43,6 +43,13 @@ const fmt = n => n.toLocaleString();
 function prefsFor(p) { return data.prefs[p.id] || (data.prefs[p.id] = { mode: "rows", hand: "right" }); }
 function progKey(p) { const pr = prefsFor(p); return `${p.id}|${pr.mode}${pr.mode === "rows" ? "|" + pr.hand : ""}`; }
 function progressFor(p) { return data.progress[progKey(p)] || (data.progress[progKey(p)] = { step: 0, inrow: 0 }); }
+// Move her place. A move backwards remembers how far along she had been (back), so sync knows
+// it was on purpose and lets it replace that place on her other devices. See newer() in sync.js.
+function moveTo(pr, step, inrow) {
+  const before = Math.max(pr.step * 1000 + (pr.inrow || 0), pr.back || 0);
+  pr.step = step; pr.inrow = inrow;
+  if (step * 1000 + inrow < before) pr.back = before; else delete pr.back;
+}
 const stepCache = new Map();
 function stepsFor(p) {
   const pr = prefsFor(p), key = progKey(p);
@@ -490,20 +497,20 @@ app.addEventListener("click", e => {
   if (t.dataset.hand) { prefsFor(p).hand = t.dataset.hand; save(); return render(); }
   if (t.dataset.chip !== undefined) {
     const pr = progressFor(p), i = +t.dataset.chip;
-    pr.inrow = i < (pr.inrow || 0) ? i : i + 1; save(); return render();
+    moveTo(pr, pr.step, i < (pr.inrow || 0) ? i : i + 1); save(); return render();
   }
   const act = t.dataset.act, pr = p && progressFor(p);
   if (act === "scale") return cycleScale();
   if (act === "zoom") { zoomed = !zoomed; return render(); }
-  if (act === "next") { pr.step++; pr.inrow = 0; save(); render(); return scrollTo(0, 0); }
-  if (act === "prev") { pr.step = Math.max(0, pr.step - 1); pr.inrow = 0; save(); render(); return scrollTo(0, 0); }
+  if (act === "next") { moveTo(pr, pr.step + 1, 0); save(); render(); return scrollTo(0, 0); }
+  if (act === "prev") { moveTo(pr, Math.max(0, pr.step - 1), 0); save(); render(); return scrollTo(0, 0); }
   if (act === "reset-ask") { document.getElementById("resetConfirm").hidden = false; t.hidden = true; return; }
   if (act === "reset-cancel") return render();
-  if (act === "reset") { pr.step = 0; pr.inrow = 0; save(); return render(); }
+  if (act === "reset") { moveTo(pr, 0, 0); save(); return render(); }
   if (act === "jump") {
     const steps = stepsFor(p), v = parseInt(document.getElementById("jump").value, 10), msg = document.getElementById("jumpMsg");
     if (!(v >= 1 && v <= steps.length)) { msg.hidden = false; msg.textContent = `Enter a row from 1 to ${steps.length}.`; return; }
-    pr.step = v - 1; pr.inrow = 0; save(); return go(`#work/${p.id}`);
+    moveTo(pr, v - 1, 0); save(); return go(`#work/${p.id}`);
   }
 });
 
