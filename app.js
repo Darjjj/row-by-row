@@ -99,6 +99,8 @@ function render() {
   const [view, id] = route();
   const p = patterns.find(x => x.id === id);
   if (view !== "work") releaseWakeLock();
+  if ((view === "pattern" || view === "work") && p) lastPlace = { view, id };
+  if (view === "feedback") return renderFeedback();
   if (view === "pattern" && p) return renderPattern(p);
   if (view === "work" && p) return renderWork(p);
   renderHome();
@@ -107,7 +109,7 @@ function render() {
 function renderHome() {
   app.innerHTML = `
   <div class="screen stack">
-    <div class="topbar"><h1>Row by Row</h1><button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button></div>
+    <div class="topbar"><h1>Row by Row</h1>${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button></div>
     <p class="muted">Pick a pattern to keep crocheting.</p>
     ${patterns.map(p => {
       const steps = stepsFor(p), pr = progressFor(p), pf = prefsFor(p);
@@ -120,6 +122,10 @@ function renderHome() {
           <span class="small">${done >= steps.length ? "Finished" : `Row ${done + 1} of ${steps.length}`}</span>
         </span></button>`;
     }).join("")}
+    <button class="card pattern-card" data-go="#feedback" style="grid-template-columns:48px minmax(0,1fr)">
+      <span class="note-icon" aria-hidden="true">${BUBBLE_SVG}</span>
+      <span><b>Ideas or problems?</b><span class="muted small">Write a note any time and send it when you're ready.${pendingNotes().length ? ` <b style="display:inline;font-size:1em;color:var(--accent)">${pendingNotes().length} waiting to send.</b>` : ""}</span></span>
+    </button>
   </div>`;
   app.querySelectorAll("[data-thumb]").forEach(cv => {
     const p = patterns.find(x => x.id === cv.dataset.thumb);
@@ -143,7 +149,7 @@ function renderPattern(p) {
     <div class="topbar">
       <button class="iconbtn" data-go="#home" aria-label="Back to patterns">←</button>
       <div class="title"><b>${esc(p.name)}</b><span>${W} × ${H} squares</span></div>
-      <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
+      ${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
     <div class="chart-wrap" id="chartWrap"><canvas id="chart" aria-label="Pattern chart"></canvas></div>
     <div class="card stack">
@@ -239,7 +245,7 @@ function renderWork(p) {
     <div class="topbar">
       <button class="iconbtn" data-go="#pattern/${p.id}" aria-label="Back to pattern">←</button>
       <div class="title"><b>Row ${s.n} of ${steps.length}</b><span>${esc(p.name)} · ${c2c ? "C2C" : "Rows"}</span></div>
-      <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
+      ${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
     <div class="bar"><i style="width:${pr.step / steps.length * 100}%"></i></div>
     <div class="card stack">
@@ -276,6 +282,123 @@ function renderWork(p) {
     wrap.scrollTop = cy - wrap.clientHeight / 2; wrap.scrollLeft = cx - wrap.clientWidth / 2;
   }
 }
+
+// ---------- notes / feedback ----------
+// Notes stay on the phone until she sends them through Android's share menu (Messages, WhatsApp, email...).
+const BUBBLE_SVG = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5" stroke-linecap="round"/></svg>`;
+const NOTES_BTN = `<button class="iconbtn" data-go="#feedback" aria-label="Write a note or idea">${BUBBLE_SVG}</button>`;
+let lastPlace = null;
+let feedbackMsg = "";
+if (!data.notes) data.notes = [];
+if (data.settings.includeWhere === undefined) data.settings.includeWhere = true;
+const pendingNotes = () => data.notes.filter(n => !n.sent);
+
+function whereText() {
+  if (!lastPlace) return "";
+  const p = patterns.find(x => x.id === lastPlace.id); if (!p) return "";
+  const pf = prefsFor(p), steps = stepsFor(p), pr = progressFor(p);
+  const style = pf.mode === "c2c" ? "C2C" : `rows, ${pf.hand}-handed`;
+  return `${p.name}, ${style}, ${pr.step >= steps.length ? "finished" : `Row ${pr.step + 1} of ${steps.length}`}`;
+}
+const when = ts => new Date(ts).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+function saveDraftAsNote() {
+  const box = document.getElementById("noteText");
+  const text = (box ? box.value : data.draft || "").trim();
+  if (!text) return false;
+  data.notes.push({ id: Date.now(), text, at: Date.now(), where: data.settings.includeWhere ? whereText() : "", sent: false });
+  data.draft = ""; save(); return true;
+}
+
+function composeMessage(list) {
+  return "Row by Row notes\n\n" + list.map((n, i) =>
+    `${list.length > 1 ? `${i + 1}) ` : ""}${n.text}\n   (${when(n.at)}${n.where ? " · " + n.where : ""})`).join("\n\n");
+}
+
+async function sendNotes() {
+  saveDraftAsNote();
+  const list = pendingNotes();
+  if (!list.length) { feedbackMsg = "Write a note first, then tap Send."; return render(); }
+  const text = composeMessage(list);
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "Row by Row notes", text });
+      list.forEach(n => { n.sent = true; n.sentAt = Date.now(); }); save();
+      feedbackMsg = list.length === 1 ? "Sent. Thank you!" : `${list.length} notes sent. Thank you!`;
+      return render();
+    } catch (e) {
+      if (e && e.name === "AbortError") { feedbackMsg = "Not sent. Your notes are still saved here."; return render(); }
+    }
+  }
+  // No share menu (e.g. a computer): show the text so it can be copied.
+  feedbackMsg = "";
+  render();
+  const fb = document.getElementById("fallback");
+  fb.hidden = false; document.getElementById("fallbackText").value = text;
+}
+
+function renderFeedback() {
+  const pending = pendingNotes(), sent = data.notes.filter(n => n.sent);
+  const where = whereText();
+  const back = lastPlace ? `#${lastPlace.view}/${lastPlace.id}` : "#home";
+  const noteItem = (n, canDelete) => `
+    <div class="note">
+      <p style="margin:0;white-space:pre-wrap">${esc(n.text)}</p>
+      <p class="small muted" style="margin:4px 0 0">${when(n.at)}${n.where ? " · " + esc(n.where) : ""}${n.sent ? ` · sent ${when(n.sentAt)}` : ""}</p>
+      ${canDelete ? `<div class="note-actions"><button class="linkbtn" data-note-del="${n.id}">Delete</button>
+        <button class="linkbtn danger-text" data-note-del-yes="${n.id}" hidden>Yes, delete this note</button></div>` : ""}
+    </div>`;
+  app.innerHTML = `
+  <div class="screen stack">
+    <div class="topbar">
+      <button class="iconbtn" data-go="${back}" aria-label="Back">←</button>
+      <div class="title"><b>Notes and ideas</b><span>Thoughts, problems, wishes</span></div>
+      <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
+    </div>
+    ${feedbackMsg ? `<p class="tip" role="status" style="margin:0">${esc(feedbackMsg)}</p>` : ""}
+    <div class="card stack">
+      <label for="noteText" class="field-label" style="margin:0">Write a note</label>
+      <textarea id="noteText" rows="5" placeholder="What's on your mind? Something confusing, a wish, a problem..."
+        style="width:100%;min-height:140px;border-radius:12px;border:1px solid var(--line);padding:12px;font:inherit;background:var(--surface);color:var(--ink);resize:vertical">${esc(data.draft || "")}</textarea>
+      <p class="small muted" style="margin:0">Tip: tap the microphone on your keyboard to talk instead of typing.</p>
+      ${where ? `<label class="check"><input type="checkbox" id="includeWhere" ${data.settings.includeWhere ? "checked" : ""}>
+        <span>Add where I am: <b>${esc(where)}</b></span></label>` : ""}
+      <button class="btn primary" data-act="send-notes">${pending.length ? `Send, with ${pending.length} saved note${pending.length > 1 ? "s" : ""}` : "Send"}</button>
+      <button class="btn quiet" data-act="save-note">Save for later</button>
+      <p class="small muted" style="margin:0">Send opens your phone's share menu. Pick Messages, WhatsApp or email and choose who to send it to.</p>
+      <div id="fallback" class="stack" hidden>
+        <p class="small" style="margin:0">This device can't open a share menu. Copy the text below and paste it into a message.</p>
+        <textarea id="fallbackText" rows="6" readonly style="width:100%;border-radius:12px;border:1px solid var(--line);padding:10px;font:inherit;background:var(--bg);color:var(--ink)"></textarea>
+        <button class="btn quiet" data-act="copy-notes">Copy text</button>
+        <button class="btn quiet" data-act="mark-sent">I've sent it</button>
+      </div>
+    </div>
+    ${pending.length ? `<div class="card stack"><h2 style="margin:0">Saved, not sent yet (${pending.length})</h2>${pending.map(n => noteItem(n, true)).join("")}</div>` : ""}
+    ${sent.length ? `<details class="card"><summary><b>Sent notes (${sent.length})</b></summary>
+      <div class="stack" style="margin-top:12px">${sent.slice().reverse().map(n => noteItem(n, true)).join("")}</div></details>` : ""}
+  </div>`;
+  feedbackMsg = "";
+  const box = document.getElementById("noteText");
+  box.addEventListener("input", () => { data.draft = box.value; save(); });
+  const inc = document.getElementById("includeWhere");
+  if (inc) inc.addEventListener("change", () => { data.settings.includeWhere = inc.checked; save(); });
+}
+
+app.addEventListener("click", async e => {
+  const t = e.target.closest("[data-note-del],[data-note-del-yes],[data-act]");
+  if (!t) return;
+  if (t.dataset.noteDel) { t.hidden = true; t.nextElementSibling.hidden = false; return; }
+  if (t.dataset.noteDelYes) { data.notes = data.notes.filter(n => String(n.id) !== t.dataset.noteDelYes); save(); return render(); }
+  const act = t.dataset.act;
+  if (act === "save-note") { feedbackMsg = saveDraftAsNote() ? "Saved. Send it whenever you like." : "Write a note first."; return render(); }
+  if (act === "send-notes") return sendNotes();
+  if (act === "copy-notes") {
+    const ta = document.getElementById("fallbackText");
+    try { await navigator.clipboard.writeText(ta.value); t.textContent = "Copied"; } catch (err) { ta.select(); }
+    return;
+  }
+  if (act === "mark-sent") { pendingNotes().forEach(n => { n.sent = true; n.sentAt = Date.now(); }); save(); feedbackMsg = "Marked as sent. Thank you!"; return render(); }
+});
 
 // ---------- actions ----------
 app.addEventListener("click", e => {
