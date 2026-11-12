@@ -94,7 +94,7 @@ h2 { font-size: 1.15em; margin: 0 0 8px; }
 
 /* notes */
 .iconbtn svg { display: block; margin: auto; }
-.note-icon { width: 48px; height: 48px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
+.note-icon { flex: none; width: 48px; height: 48px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
 .note { border-top: 1px solid var(--line); padding-top: 10px; }
 .note:first-of-type { border-top: 0; padding-top: 0; }
 .note-actions { display: flex; gap: 14px; margin-top: 6px; }

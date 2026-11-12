@@ -1,11 +1,39 @@
 // Row by Row: follow a pixel crochet pattern one row at a time.
 "use strict";
 
-// ---------- saved data (lives only on this phone) ----------
+// ---------- saved data (on this device; sync.js copies it to the cloud when signed in) ----------
 const STORE_KEY = "rowbyrow.v1";
 let data = { settings: { scale: 1 }, prefs: {}, progress: {} };
 try { Object.assign(data, JSON.parse(localStorage.getItem(STORE_KEY) || "{}")); } catch (e) {}
-function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) {} }
+
+// Every synced entry (a place in a pattern, a style choice, a note) carries t = when it last changed,
+// so devices can tell whose copy is newest. Changes are detected in save(), so callers just call save().
+const DEFAULTS = { progress: '{"step":0,"inrow":0}', prefs: '{"mode":"rows","hand":"right"}' };
+const strip = o => { const { t, ...rest } = o; return JSON.stringify(rest); };
+function syncedEntries() {
+  const out = [];
+  for (const sec of ["progress", "prefs"]) for (const k in data[sec]) out.push([sec, k, data[sec][k]]);
+  (data.notes || []).forEach(n => out.push(["notes", String(n.id), n]));
+  return out;
+}
+let snap = {};
+function resnap() { snap = {}; syncedEntries().forEach(([s, k, o]) => snap[s + "/" + k] = strip(o)); }
+resnap();
+function stampChanges() {
+  const now = Date.now();
+  for (const [s, k, o] of syncedEntries()) {
+    const id = s + "/" + k, cur = strip(o);
+    if (snap[id] === cur) continue;
+    const brandNewDefault = snap[id] === undefined && DEFAULTS[s] === cur;   // just created, nothing done yet
+    if (!brandNewDefault) o.t = now;
+    snap[id] = cur;
+  }
+}
+function save() {
+  stampChanges();
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) {}
+  if (window.syncPush) window.syncPush();
+}
 
 const patterns = BUILTIN_PATTERNS;
 const app = document.getElementById("app");
@@ -122,6 +150,7 @@ function renderHome() {
           <span class="small">${done >= steps.length ? "Finished" : `Row ${done + 1} of ${steps.length}`}</span>
         </span></button>`;
     }).join("")}
+    ${syncCardHtml()}
     <button class="card pattern-card" data-go="#feedback" style="grid-template-columns:48px minmax(0,1fr)">
       <span class="note-icon" aria-hidden="true">${BUBBLE_SVG}</span>
       <span><b>Ideas or problems?</b><span class="muted small">Write a note any time and send it when you're ready.${pendingNotes().length ? ` <b style="display:inline;font-size:1em;color:var(--accent)">${pendingNotes().length} waiting to send.</b>` : ""}</span></span>
@@ -283,6 +312,52 @@ function renderWork(p) {
   }
 }
 
+// ---------- sync card + hooks used by sync.js ----------
+function syncCardHtml() {
+  const s = window.syncState ? window.syncState() : { status: "loading" };
+  const msg = s.message ? `<p class="small" role="status" style="margin:0;color:${s.status === "error" ? "#c62f2f" : "var(--muted)"}">${esc(s.message)}</p>` : "";
+  if (s.user) {
+    const label = { synced: "Up to date on all your devices", saving: "Saving...", offline: "Offline. Your changes will sync when you're back online.",
+      connecting: "Connecting...", error: "" }[s.status] || "";
+    return `<div class="card stack">
+      <div style="display:flex;gap:12px;align-items:center">
+        <span class="note-icon" aria-hidden="true">${CLOUD_SVG}</span>
+        <span style="min-width:0"><b style="display:block">Syncing your place</b>
+          <span class="small muted" style="overflow-wrap:anywhere">${esc(s.user.email || "")}</span></span></div>
+      ${label ? `<p class="small" style="margin:0">${s.status === "synced" ? "✓ " : ""}${label}</p>` : ""}${msg}
+      <div class="note-actions"><button class="linkbtn" data-act="signout-ask">Sign out on this device</button>
+        <button class="linkbtn danger-text" data-act="signout" hidden>Yes, sign out</button></div>
+      <p class="small muted" id="signoutNote" hidden style="margin:0">Your place stays on this device, but it stops syncing.</p>
+    </div>`;
+  }
+  if (s.status === "unavailable") return `<div class="card"><b>Use on all your devices</b>
+      <p class="small muted" style="margin:6px 0 0">Syncing needs internet the first time. Connect and reopen the app.</p></div>`;
+  return `<div class="card stack">
+      <div style="display:flex;gap:12px;align-items:center">
+        <span class="note-icon" aria-hidden="true">${CLOUD_SVG}</span>
+        <span><b style="display:block">Use on all your devices</b>
+          <span class="small muted">Sign in with Google to keep your place the same on your phone, tablet and other devices.</span></span></div>
+      ${msg}
+      <button class="btn quiet" data-act="signin" ${s.status === "loading" || s.status === "connecting" ? "disabled" : ""}>Sign in with Google</button>
+    </div>`;
+}
+const CLOUD_SVG = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.1 9.5 4.25 4.25 0 0 0 7 18z"/></svg>`;
+
+// Called by sync.js. Redraw unless she's typing a note.
+function onSyncChange(remoteChanged) {
+  const v = route()[0];
+  if (v === "home" || ((v === "pattern" || v === "work") && remoteChanged)) render();
+}
+window.RBR = { getData: () => data, resnap, save, onSyncChange,
+  persist: () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) {} } };
+
+app.addEventListener("click", e => {
+  const t = e.target.closest("[data-act]"); if (!t) return;
+  if (t.dataset.act === "signin" && window.syncSignIn) window.syncSignIn();
+  if (t.dataset.act === "signout-ask") { t.hidden = true; t.nextElementSibling.hidden = false; document.getElementById("signoutNote").hidden = false; }
+  if (t.dataset.act === "signout" && window.syncSignOut) window.syncSignOut();
+});
+
 // ---------- notes / feedback ----------
 // Notes stay on the phone until she sends them through Android's share menu (Messages, WhatsApp, email...).
 const BUBBLE_SVG = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5" stroke-linecap="round"/></svg>`;
@@ -291,7 +366,7 @@ let lastPlace = null;
 let feedbackMsg = "";
 if (!data.notes) data.notes = [];
 if (data.settings.includeWhere === undefined) data.settings.includeWhere = true;
-const pendingNotes = () => data.notes.filter(n => !n.sent);
+const pendingNotes = () => data.notes.filter(n => !n.sent && !n.deleted);
 
 function whereText() {
   if (!lastPlace) return "";
@@ -338,7 +413,7 @@ async function sendNotes() {
 }
 
 function renderFeedback() {
-  const pending = pendingNotes(), sent = data.notes.filter(n => n.sent);
+  const pending = pendingNotes(), sent = data.notes.filter(n => n.sent && !n.deleted);
   const where = whereText();
   const back = lastPlace ? `#${lastPlace.view}/${lastPlace.id}` : "#home";
   const noteItem = (n, canDelete) => `
@@ -388,7 +463,11 @@ app.addEventListener("click", async e => {
   const t = e.target.closest("[data-note-del],[data-note-del-yes],[data-act]");
   if (!t) return;
   if (t.dataset.noteDel) { t.hidden = true; t.nextElementSibling.hidden = false; return; }
-  if (t.dataset.noteDelYes) { data.notes = data.notes.filter(n => String(n.id) !== t.dataset.noteDelYes); save(); return render(); }
+  if (t.dataset.noteDelYes) {   // keep a blank marker so other devices delete it too
+    const n = data.notes.find(n => String(n.id) === t.dataset.noteDelYes);
+    if (n) { n.deleted = true; n.text = ""; n.where = ""; }
+    save(); return render();
+  }
   const act = t.dataset.act;
   if (act === "save-note") { feedbackMsg = saveDraftAsNote() ? "Saved. Send it whenever you like." : "Write a note first."; return render(); }
   if (act === "send-notes") return sendNotes();

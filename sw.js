@@ -1,6 +1,6 @@
 // Offline support: keep the app files on the phone. Bump VERSION when any file changes.
-const VERSION = "rbr-v2";
-const FILES = ["./", "index.html", "style.css", "app.js", "pattern.js", "builtin.js", "manifest.webmanifest",
+const VERSION = "rbr-v3";
+const FILES = ["./", "index.html", "style.css", "app.js", "pattern.js", "builtin.js", "sync.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", e => {
@@ -13,8 +13,11 @@ self.addEventListener("activate", e => {
 });
 
 // Network first so updates arrive when online; fall back to the saved copy offline.
+// Only app files and the Firebase library are cached; sync and sign-in traffic goes straight to the network.
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
+  const url = new URL(e.request.url);
+  if (url.origin !== self.location.origin && url.hostname !== "www.gstatic.com") return;
   e.respondWith(
     fetch(e.request).then(res => {
       const copy = res.clone();
