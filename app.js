@@ -10,9 +10,11 @@ try { Object.assign(data, JSON.parse(localStorage.getItem(STORE_KEY) || "{}")); 
 // so devices can tell whose copy is newest. Changes are detected in save(), so callers just call save().
 const DEFAULTS = { progress: '{"step":0,"inrow":0}', prefs: '{"mode":"rows","hand":"right"}' };
 const strip = o => { const { t, ...rest } = o; return JSON.stringify(rest); };
+// Patterns she makes live in data.patterns by id; a deleted one becomes { deleted: true } so the delete syncs.
+if (!data.patterns) data.patterns = {};
 function syncedEntries() {
   const out = [];
-  for (const sec of ["progress", "prefs"]) for (const k in data[sec]) out.push([sec, k, data[sec][k]]);
+  for (const sec of ["progress", "prefs", "patterns"]) for (const k in data[sec]) out.push([sec, k, data[sec][k]]);
   (data.notes || []).forEach(n => out.push(["notes", String(n.id), n]));
   return out;
 }
@@ -35,7 +37,15 @@ function save() {
   if (window.syncPush) window.syncPush();
 }
 
-const patterns = BUILTIN_PATTERNS;
+const myPatterns = () => Object.values(data.patterns).filter(p => !p.deleted && p.grid);
+const allPatterns = () => [...myPatterns(), ...BUILTIN_PATTERNS];
+const findPattern = id => allPatterns().find(x => x.id === id);
+// Most recently worked on (or made) first.
+function lastUsed(p) {
+  let t = p.created || 0;
+  for (const k in data.progress) if (k.split("|")[0] === p.id) t = Math.max(t, data.progress[k].t || 0);
+  return t;
+}
 const app = document.getElementById("app");
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = n => n.toLocaleString();
@@ -50,15 +60,17 @@ function moveTo(pr, step, inrow) {
   pr.step = step; pr.inrow = inrow;
   if (step * 1000 + inrow < before) pr.back = before; else delete pr.back;
 }
-const stepCache = new Map();
+const stepCache = new WeakMap();   // per pattern object, so a pattern replaced by sync gets fresh steps
 function stepsFor(p) {
   const pr = prefsFor(p), key = progKey(p);
-  if (!stepCache.has(key)) {
+  if (!stepCache.has(p)) stepCache.set(p, new Map());
+  const cache = stepCache.get(p);
+  if (!cache.has(key)) {
     const steps = buildSteps(p, pr.mode, pr.hand);
     if (!verifySteps(p.grid, steps)) throw new Error("Pattern check failed");
-    stepCache.set(key, steps);
+    cache.set(key, steps);
   }
-  return stepCache.get(key);
+  return cache.get(key);
 }
 function colorMap(p) { const m = {}; p.colors.forEach(c => m[c.code] = c); return m; }
 function textOn(hex) {
@@ -132,10 +144,11 @@ window.addEventListener("resize", () => {
 
 function render() {
   const [view, id] = route();
-  const p = patterns.find(x => x.id === id);
+  const p = findPattern(id);
   if (view !== "work") releaseWakeLock();
   if ((view === "pattern" || view === "work") && p) lastPlace = { view, id };
   if (view === "feedback") return renderFeedback();
+  if (view === "new" && draft) return renderNew();
   if (view === "pattern" && p) return renderPattern(p);
   if (view === "work" && p) return renderWork(p);
   renderHome();
@@ -146,7 +159,8 @@ function renderHome() {
   <div class="screen stack">
     <div class="topbar"><h1>Row by Row</h1>${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button></div>
     <p class="muted">Pick a pattern to keep crocheting.</p>
-    ${patterns.map(p => {
+    ${homeMsg ? `<p class="tip" role="status" style="margin:0">${esc(homeMsg)}</p>` : ""}
+    ${allPatterns().sort((a, b) => lastUsed(b) - lastUsed(a)).map(p => {
       const steps = stepsFor(p), pr = progressFor(p), pf = prefsFor(p);
       const done = Math.min(pr.step, steps.length);
       return `<button class="card pattern-card" data-go="#pattern/${p.id}">
@@ -157,6 +171,8 @@ function renderHome() {
           <span class="small">${done >= steps.length ? "Finished" : `Row ${done + 1} of ${steps.length}`}</span>
         </span></button>`;
     }).join("")}
+    <button class="btn quiet" data-act="new-picture">＋ New pattern from a picture</button>
+    <input type="file" id="picFile" accept="image/*" hidden>
     ${syncCardHtml()}
     <button class="card pattern-card" data-go="#feedback" style="grid-template-columns:48px minmax(0,1fr)">
       <span class="note-icon" aria-hidden="true">${BUBBLE_SVG}</span>
@@ -164,9 +180,11 @@ function renderHome() {
     </button>
   </div>`;
   app.querySelectorAll("[data-thumb]").forEach(cv => {
-    const p = patterns.find(x => x.id === cv.dataset.thumb);
-    drawChart(cv, p, { cell: 88 / p.grid[0].length });
+    const p = findPattern(cv.dataset.thumb);
+    drawChart(cv, p, { cell: 88 / Math.max(p.grid[0].length, p.grid.length * 0.8) });
   });
+  document.getElementById("picFile").addEventListener("change", e => { if (e.target.files[0]) startDraft(e.target.files[0]); });
+  homeMsg = "";
 }
 
 function yardage(p, count) {
@@ -243,7 +261,26 @@ function renderPattern(p) {
         <button class="btn quiet" data-act="reset-cancel">Cancel</button>
       </div>
     </div>
+    ${p.builtIn ? "" : `<div class="card stack">
+      <label class="field-label" for="patName" style="margin:0">Pattern name</label>
+      <input id="patName" class="text-input" value="${esc(p.name)}" maxlength="60" enterkeyhint="done">
+      <div class="note-actions" style="margin:0"><button class="linkbtn danger-text" data-act="delete-ask">Delete this pattern</button></div>
+      <div id="deleteConfirm" class="confirm" hidden>
+        <p class="small" style="margin:0">This removes ${esc(p.name)} and your place in it from all your devices.</p>
+        <button class="btn danger" data-act="delete">Yes, delete it</button>
+        <button class="btn quiet" data-act="delete-cancel">Cancel</button>
+      </div>
+    </div>`}
   </div>`;
+  const nameBox = document.getElementById("patName");
+  if (nameBox) {
+    const rename = () => {
+      const v = nameBox.value.trim();
+      if (v && v !== p.name) { p.name = v; save(); document.querySelector(".topbar .title b").textContent = v; }
+    };
+    nameBox.addEventListener("change", rename);
+    nameBox.addEventListener("keydown", e => { if (e.key === "Enter") nameBox.blur(); });
+  }
   const wrap = document.getElementById("chartWrap");
   drawChart(document.getElementById("chart"), p, { cell: (wrap.clientWidth - 2) / W, steps, step: pr.step, fade: false });
 }
@@ -329,7 +366,7 @@ function syncCardHtml() {
     return `<div class="card stack">
       <div style="display:flex;gap:12px;align-items:center">
         <span class="note-icon" aria-hidden="true">${CLOUD_SVG}</span>
-        <span style="min-width:0"><b style="display:block">Syncing your place</b>
+        <span style="min-width:0"><b style="display:block">Syncing your patterns and place</b>
           <span class="small muted" style="overflow-wrap:anywhere">${esc(s.user.email || "")}</span></span></div>
       ${label ? `<p class="small" style="margin:0">${s.status === "synced" ? "✓ " : ""}${label}</p>` : ""}${msg}
       <div class="note-actions"><button class="linkbtn" data-act="signout-ask">Sign out on this device</button>
@@ -343,7 +380,7 @@ function syncCardHtml() {
       <div style="display:flex;gap:12px;align-items:center">
         <span class="note-icon" aria-hidden="true">${CLOUD_SVG}</span>
         <span><b style="display:block">Use on all your devices</b>
-          <span class="small muted">Sign in with Google to keep your place the same on your phone, tablet and other devices.</span></span></div>
+          <span class="small muted">Sign in with Google to keep your patterns and your place the same on your phone, tablet and other devices.</span></span></div>
       ${msg}
       <button class="btn quiet" data-act="signin" ${s.status === "loading" || s.status === "connecting" ? "disabled" : ""}>Sign in with Google</button>
     </div>`;
@@ -377,7 +414,7 @@ const pendingNotes = () => data.notes.filter(n => !n.sent && !n.deleted);
 
 function whereText() {
   if (!lastPlace) return "";
-  const p = patterns.find(x => x.id === lastPlace.id); if (!p) return "";
+  const p = findPattern(lastPlace.id); if (!p) return "";
   const pf = prefsFor(p), steps = stepsFor(p), pr = progressFor(p);
   const style = pf.mode === "c2c" ? "C2C" : `rows, ${pf.hand}-handed`;
   return `${p.name}, ${style}, ${pr.step >= steps.length ? "finished" : `Row ${pr.step + 1} of ${steps.length}`}`;
@@ -491,7 +528,7 @@ app.addEventListener("click", e => {
   const t = e.target.closest("[data-go],[data-act],[data-mode],[data-hand],[data-chip]");
   if (!t || t.disabled) return;
   const [view, id] = route();
-  const p = patterns.find(x => x.id === id);
+  const p = findPattern(id);
   if (t.dataset.go) return go(t.dataset.go);
   if (t.dataset.mode) { prefsFor(p).mode = t.dataset.mode; save(); return render(); }
   if (t.dataset.hand) { prefsFor(p).hand = t.dataset.hand; save(); return render(); }
@@ -507,12 +544,215 @@ app.addEventListener("click", e => {
   if (act === "reset-ask") { document.getElementById("resetConfirm").hidden = false; t.hidden = true; return; }
   if (act === "reset-cancel") return render();
   if (act === "reset") { moveTo(pr, 0, 0); save(); return render(); }
+  if (act === "delete-ask") { document.getElementById("deleteConfirm").hidden = false; t.hidden = true; return; }
+  if (act === "delete-cancel") return render();
+  if (act === "delete") { data.patterns[p.id] = { deleted: true }; save(); return go("#home"); }
+  if (act === "new-picture") return document.getElementById("picFile").click();
   if (act === "jump") {
     const steps = stepsFor(p), v = parseInt(document.getElementById("jump").value, 10), msg = document.getElementById("jumpMsg");
     if (!(v >= 1 && v <= steps.length)) { msg.hidden = false; msg.textContent = `Enter a row from 1 to ${steps.length}.`; return; }
     moveTo(pr, v - 1, 0); save(); return go(`#work/${p.id}`);
   }
 });
+
+// ---------- new pattern from a picture ----------
+// The picture is kept in memory only; the finished grid is what gets saved and synced.
+let draft = null, homeMsg = "";
+const SS = 6;   // pixels sampled across each square, each way
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const hexRgb = h => { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+
+function loadPicture(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url); res(c);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("not a picture")); };
+    img.src = url;
+  });
+}
+
+async function startDraft(file) {
+  let pic;
+  try { pic = await loadPicture(file); }
+  catch (e) { homeMsg = "That file couldn't be opened as a picture. Try a JPG or PNG."; return render(); }
+  const W = 50, H = clamp(Math.round(W * pic.height / pic.width), 5, 150);
+  draft = { pic, name: "", W, H, k: 6, zoom: 1, cx: pic.width / 2, cy: pic.height / 2, tidy: true,
+    border: 0, borderCode: "A", names: [], view: "pattern", result: null };
+  go("#new");
+}
+
+// The part of the picture that fills the pattern: the pattern's shape, as big as fits, divided by zoom.
+function cropRect(d) {
+  const a = d.W / d.H, iw = d.pic.width, ih = d.pic.height;
+  let w = iw, h = iw / a;
+  if (h > ih) { h = ih; w = ih * a; }
+  w /= d.zoom; h /= d.zoom;
+  d.cx = clamp(d.cx, w / 2, iw - w / 2); d.cy = clamp(d.cy, h / 2, ih - h / 2);
+  return { x: d.cx - w / 2, y: d.cy - h / 2, w, h };
+}
+
+function computeDraft(d) {
+  const r = cropRect(d), c = document.createElement("canvas");
+  c.width = d.W * SS; c.height = d.H * SS;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(d.pic, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+  const g = makeGrid(cellColors(ctx.getImageData(0, 0, c.width, c.height).data, d.W, d.H, SS), d.W, d.H, d.k, { tidy: d.tidy });
+  // Keep names she typed: each goes to the new color closest to the one she named, if it's still close.
+  g.colors.forEach(col => {
+    const lab = toLab(hexRgb(col.hex)); let best = null, bd = 0.0064;
+    d.names.forEach(n => { const dd = labDist2(lab, n.lab); if (dd < bd) { bd = dd; best = n; } });
+    if (best) col.name = best.name;
+  });
+  if (!g.colors.some(c => c.code === d.borderCode)) d.borderCode = "A";
+  d.result = g;
+}
+
+function draftPattern(d) {
+  return { id: "draft", name: d.name, grid: addBorder(d.result.grid, d.border, d.borderCode),
+    colors: d.result.colors.map(({ code, name, hex }) => ({ code, name, hex })) };
+}
+
+function renderNew() {
+  const d = draft;
+  if (!d.result) computeDraft(d);
+  app.innerHTML = `
+  <div class="screen stack">
+    <div class="topbar"><button class="iconbtn" id="dCancel" aria-label="Cancel">←</button>
+      <div class="title"><b>New pattern</b><span>From a picture</span></div></div>
+    <div class="seg" role="group" aria-label="Show">
+      <button data-view="pattern" aria-pressed="${d.view === "pattern"}">Pattern</button>
+      <button data-view="photo" aria-pressed="${d.view === "photo"}">Picture</button></div>
+    <div class="chart-wrap editor-preview" id="chartWrap"><canvas id="chart" aria-label="Preview. Drag to move the picture."></canvas></div>
+    <p class="small muted" style="margin:-6px 0 0">Drag to move the picture. Pinch or use Zoom to fill more of it.</p>
+    <div class="card stack">
+      <div><label class="field-label" for="dName">Name</label>
+        <input id="dName" class="text-input" value="${esc(d.name)}" placeholder="My pattern" maxlength="60" enterkeyhint="done"></div>
+      <div class="field-row">
+        <div><label class="field-label" for="dW">Width</label><input id="dW" class="text-input" type="number" inputmode="numeric" min="5" max="150" value="${d.W}"></div>
+        <div><label class="field-label" for="dH">Height</label><input id="dH" class="text-input" type="number" inputmode="numeric" min="5" max="150" value="${d.H}"></div>
+      </div>
+      <p class="small muted" id="dSize" style="margin:-4px 0 0"></p>
+      <div><label class="field-label" for="dZoom">Zoom</label>
+        <input id="dZoom" type="range" min="1" max="4" step="0.01" value="${d.zoom}"></div>
+      <div><label class="field-label" for="dK">Colors: <span id="dKv">${d.k}</span></label>
+        <input id="dK" type="range" min="2" max="12" step="1" value="${d.k}"></div>
+      <label class="check"><input type="checkbox" id="dTidy" ${d.tidy ? "checked" : ""}><span>Tidy up stray single squares</span></label>
+      <div><div class="field-label">Border</div>
+        <div class="seg" role="group" aria-label="Border width">${[0, 1, 2, 3].map(n =>
+          `<button data-border="${n}" aria-pressed="${d.border === n}">${n ? n + " sq" : "None"}</button>`).join("")}</div>
+        <div class="swatches" id="dBorderColor" ${d.border ? "" : "hidden"}></div></div>
+    </div>
+    <div class="card stack"><div><h2 style="margin:0 0 4px">Yarn colors</h2>
+      <p class="small muted" style="margin:0">Rename them to match your yarn.</p></div>
+      <div class="key" id="dColors"></div></div>
+    <button class="btn primary" id="dSave">Save pattern</button>
+  </div>`;
+
+  let queued = false;
+  const update = recompute => {
+    if (queued) return; queued = true;
+    requestAnimationFrame(() => { queued = false; if (recompute) computeDraft(d); drawDraft(); });
+  };
+  const $ = id => document.getElementById(id);
+  $("dCancel").onclick = () => { draft = null; go("#home"); };
+  $("dName").oninput = e => d.name = e.target.value;
+  $("dName").onkeydown = e => { if (e.key === "Enter") e.target.blur(); };
+  const sizeBox = id => {
+    $(id).oninput = e => {
+      const v = parseInt(e.target.value, 10);
+      if (!(v >= 5 && v <= 150)) return;
+      if (id === "dW") { d.H = clamp(Math.round(d.H * v / d.W), 5, 150); $("dH").value = d.H; d.W = v; }
+      else d.H = v;
+      update(true);
+    };
+    $(id).onchange = e => { e.target.value = id === "dW" ? d.W : d.H; };
+  };
+  sizeBox("dW"); sizeBox("dH");
+  $("dZoom").oninput = e => { d.zoom = +e.target.value; update(true); };
+  $("dK").oninput = e => { d.k = +e.target.value; $("dKv").textContent = d.k; update(true); };
+  $("dTidy").onchange = e => { d.tidy = e.target.checked; update(true); };
+  app.querySelectorAll("[data-view]").forEach(b => b.onclick = () => {
+    d.view = b.dataset.view;
+    app.querySelectorAll("[data-view]").forEach(x => x.setAttribute("aria-pressed", x === b)); drawDraft();
+  });
+  app.querySelectorAll("[data-border]").forEach(b => b.onclick = () => {
+    d.border = +b.dataset.border; $("dBorderColor").hidden = !d.border;
+    app.querySelectorAll("[data-border]").forEach(x => x.setAttribute("aria-pressed", x === b)); drawDraft();
+  });
+  $("dBorderColor").onclick = e => { const b = e.target.closest("[data-code]"); if (b) { d.borderCode = b.dataset.code; drawDraft(); } };
+  $("dColors").oninput = e => {
+    const i = +e.target.dataset.i, col = d.result.colors[i];
+    if (!col) return;
+    col.name = e.target.value;
+    const lab = toLab(hexRgb(col.hex));
+    d.names = d.names.filter(n => labDist2(n.lab, lab) >= 0.0064).concat({ lab, name: col.name });
+  };
+
+  // Drag to move the picture, pinch to zoom.
+  const cv = $("chart"), pts = new Map();
+  let pinch = 0;
+  cv.onpointerdown = e => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); pinch = 0; };
+  cv.onpointermove = e => {
+    if (!pts.has(e.pointerId)) return;
+    const [px, py] = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pts.size === 1) {
+      const per = cropRect(d).w / d.W / d.cell;   // picture pixels per screen pixel
+      d.cx -= (e.clientX - px) * per; d.cy -= (e.clientY - py) * per;
+    } else {
+      const [a, b] = [...pts.values()], dist = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (pinch) { d.zoom = clamp(d.zoom * dist / pinch, 1, 4); $("dZoom").value = d.zoom; }
+      pinch = dist;
+    }
+    update(true);
+  };
+  cv.onpointerup = cv.onpointercancel = e => { pts.delete(e.pointerId); pinch = 0; };
+  drawDraft();
+}
+
+function drawDraft() {
+  const d = draft, p = draftPattern(d), W = p.grid[0].length, H = p.grid.length;
+  const wrap = document.getElementById("chartWrap"), cv = document.getElementById("chart");
+  if (!wrap) return;
+  const cell = Math.min((wrap.clientWidth - 2) / W, innerHeight * 0.5 / H);
+  d.cell = cell;
+  if (d.view === "photo") {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3), r = cropRect(d), b = d.border * cell;
+    cv.width = Math.round(W * cell * dpr); cv.height = Math.round(H * cell * dpr);
+    cv.style.width = W * cell + "px"; cv.style.height = H * cell + "px";
+    const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
+    ctx.fillStyle = p.colors.find(c => c.code === d.borderCode).hex; ctx.fillRect(0, 0, W * cell, H * cell);
+    ctx.drawImage(d.pic, r.x, r.y, r.w, r.h, b, b, d.W * cell, d.H * cell);
+  } else drawChart(cv, p, { cell });
+  const counts = {}; p.grid.join("").split("").forEach(k => counts[k] = (counts[k] || 0) + 1);
+  document.getElementById("dSize").textContent =
+    `${W} × ${H} squares${d.border ? " with the border" : ""}. In C2C with 1 in blocks, about ${W} × ${H} in.`;
+  const list = document.getElementById("dColors");
+  if (!list.contains(document.activeElement)) list.innerHTML = p.colors.map((c, i) => `
+    <div class="key-row"><span class="sw" style="background:${c.hex}"></span><span class="code">${c.code}</span>
+      <input class="text-input slim" data-i="${i}" value="${esc(c.name)}" aria-label="Name for color ${c.code}" maxlength="40">
+      <span class="num">${fmt(counts[c.code] || 0)}</span></div>`).join("");
+  document.getElementById("dBorderColor").innerHTML = p.colors.map(c =>
+    `<button class="swatch-btn" data-code="${c.code}" aria-pressed="${c.code === d.borderCode}" aria-label="Border color ${esc(c.name)}"
+      style="background:${c.hex}"></button>`).join("");
+}
+
+function saveDraft() {
+  const d = draft, p = draftPattern(d);
+  const taken = new Set(allPatterns().map(x => x.name));
+  let name = d.name.trim();
+  if (!name) { name = "My pattern"; for (let n = 2; taken.has(name); n++) name = `My pattern ${n}`; }
+  const id = "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  data.patterns[id] = { id, name, grid: p.grid, colors: p.colors.map(c => ({ ...c, name: c.name.trim() || colorName(c.hex) })), created: Date.now() };
+  draft = null; save(); go(`#pattern/${id}`);
+}
+app.addEventListener("click", e => { if (e.target.id === "dSave" && draft) saveDraft(); });
 
 // ---------- keep the screen on while crocheting ----------
 let wakeLock = null;

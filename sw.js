@@ -1,6 +1,6 @@
 // Offline support: keep the app files on the phone. Bump VERSION when any file changes.
-const VERSION = "rbr-v5";
-const FILES = ["./", "index.html", "style.css", "app.js", "pattern.js", "builtin.js", "sync.js", "manifest.webmanifest",
+const VERSION = "rbr-v6";
+const FILES = ["./", "index.html", "style.css", "app.js", "pattern.js", "picture.js", "builtin.js", "sync.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", e => {

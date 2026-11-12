@@ -38,9 +38,10 @@
     return ta - tb;
   }
   // first: this device is joining this account for the first time, so the cloud's style choices win.
+  const SECTIONS = ["progress", "prefs", "patterns"];   // maps of entries keyed by id (notes are a list locally)
   function mergeRemote(data, remote, first) {   // copy winning remote entries into data; returns true if anything changed
     let any = false;
-    for (const sec of ["progress", "prefs"]) {
+    for (const sec of SECTIONS) {
       const r = remote[sec] || {};
       data[sec] = data[sec] || {};
       for (const k in r) {
@@ -59,20 +60,21 @@
     if (any) data.notes.sort((a, b) => a.id - b.id);
     return any;
   }
-  // Only the entries where this device's copy beats the cloud's, or null if there are none.
-  // Sending just these (with merge) means a device never overwrites a better copy in the cloud.
+  // Only the entries where this device's copy beats the cloud's, or null if there are none:
+  // { out: the document fields, paths: [[section, id]] for each entry sent }.
+  // Sending just these means a device never overwrites a better copy in the cloud.
   function toPush(data, remote) {
-    const out = { progress: {}, prefs: {}, notes: {} };
-    let any = false;
-    for (const sec of ["progress", "prefs"]) for (const k in data[sec] || {}) {
+    const out = {}, paths = [];
+    const add = (sec, k, v) => { (out[sec] = out[sec] || {})[k] = v; paths.push([sec, k]); };
+    for (const sec of SECTIONS) for (const k in data[sec] || {}) {
       const r = (remote[sec] || {})[k], l = data[sec][k];
-      if (r ? newer(l, r, sec) > 0 : tOf(l, sec) > 0) { out[sec][k] = l; any = true; }
+      if (r ? newer(l, r, sec) > 0 : tOf(l, sec) > 0) add(sec, k, l);
     }
     for (const n of data.notes || []) {
       const r = (remote.notes || {})[String(n.id)];
-      if (!r || newer(n, r, "notes") > 0) { out.notes[String(n.id)] = n; any = true; }
+      if (!r || newer(n, r, "notes") > 0) add("notes", String(n.id), n);
     }
-    return any ? JSON.parse(JSON.stringify(out)) : null;
+    return paths.length ? { out: JSON.parse(JSON.stringify(out)), paths } : null;
   }
   window.syncMergeRules = { mergeRemote, toPush };
 
@@ -97,10 +99,13 @@
     if (!docRef || !remote) return;
     clearTimeout(pushTimer);
     pushTimer = setTimeout(() => {
-      const out = remote && toPush(window.RBR.getData(), remote);
-      if (!docRef || !out) return;
+      const p = remote && toPush(window.RBR.getData(), remote);
+      if (!docRef || !p) return;
       state.status = "saving";
-      docRef.set(out, { merge: true }).catch(e => { fail(e); retryLater(); });
+      // mergeFields replaces each sent entry whole (plain merge would keep fields the entry no longer has)
+      // and leaves every other entry in the document alone.
+      const fields = p.paths.map(([sec, k]) => new firebase.firestore.FieldPath(sec, k));
+      docRef.set(p.out, { mergeFields: fields }).catch(e => { fail(e); retryLater(); });
     }, 600);
   }
   window.syncPush = () => { if (docRef) push(); };
