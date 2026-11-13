@@ -64,7 +64,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     // ---- fix squares and colors on the saved chart pattern
     {
       const pid = await page.evaluate(() => location.hash.split("/")[1]);
-      await page.click('[data-go^="#edit/"]'); await page.waitForSelector("#eSave");
+      await page.waitForSelector('[data-go^="#edit/"]'); await page.click('[data-go^="#edit/"]'); await page.waitForSelector("#eSave");
       const tap = async (x, y) => {
         const box = await (await page.$("#chart")).boundingBox(), cell = await page.evaluate(() => editing.cell);
         await page.evaluate((x, y, cell) => { const w = document.getElementById("chartWrap"); w.scrollLeft = x * cell - 40; w.scrollTop = y * cell - 40; }, x, y, cell);
@@ -270,6 +270,32 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       await page.click('.topbar [aria-label="Back"]'); await wait(300);
       ok(await page.evaluate(() => location.hash === "#new" && !!document.getElementById("dSave")), "Back from notes returns to the pattern she was making");
       await page.evaluate(() => { window.syncState = window._ss; delete window.syncFlush; delete window.syncUpload; draft = null; });
+    }
+
+    // Chart pattern from a link (a pattern request coming back): add it, it opens, and the link again offers to update.
+    {
+      const P = await page.evaluate(() => BUILTIN_PATTERNS[0]);
+      const chart = { kind: "chart", id: "c-test-request", name: "Requested turtle", grid: P.grid, colors: P.colors };
+      const code = c => require("zlib").deflateRawSync(Buffer.from(JSON.stringify(c)), { level: 9 }).toString("base64url");
+      await page.goto(URL + "#home", { waitUntil: "load" });
+      await page.goto(URL + "#import/" + code(chart), { waitUntil: "load" }); await page.waitForSelector("#impAdd");
+      let txt = await page.evaluate(() => document.body.innerText);
+      ok(/Requested turtle/.test(txt) && /51 × 60 squares, \d+ colors/.test(txt) && /Add to my patterns/.test(txt) && await page.$("#impChart"),
+        "a chart link shows the pattern, its size and yarns, and offers to add it");
+      await page.screenshot({ path: OUT + "chart-import.png", fullPage: true }); await wait(400);
+      await page.click("#impAdd"); await page.waitForFunction(() => location.hash === "#pattern/c-test-request");
+      ok(await page.evaluate(() => !!data.patterns["c-test-request"] && data.patterns["c-test-request"].grid.length === 60 && !data.patterns["c-test-request"].kind),
+        "adding it saves it with her patterns and opens it");
+      await page.goto(URL + "#import/" + code(chart), { waitUntil: "load" }); await page.waitForSelector("#impAdd");
+      ok(/Update my pattern/.test(await page.evaluate(() => document.body.innerText)), "opening the same link again offers to update");
+      await page.goto(URL + "#import/" + code({ ...chart, id: "../evil" }), { waitUntil: "load" }); await wait(500);
+      ok(/didn't open/.test(await page.evaluate(() => document.body.innerText)), "a chart link with a bad id is refused");
+      await page.goto(URL + "#import/" + code({ ...chart, id: "c-too-many", colors: [...P.colors, ...P.colors.map((c, i) => ({ ...c, code: "abcdefghijk"[i] }))] }), { waitUntil: "load" }); await wait(500);
+      ok(/didn't open/.test(await page.evaluate(() => document.body.innerText)), "a chart link with more than 10 colors is refused");
+      await page.goto(URL + "#feedback", { waitUntil: "load" }); await page.waitForSelector('[data-act="ask-pattern"]');
+      await page.click('[data-act="ask-pattern"]');
+      ok(await page.evaluate(() => document.getElementById("noteText").value.startsWith("Pattern request: ")), "Ask for a pattern starts the note for her");
+      await page.evaluate(() => { document.getElementById("noteText").value = ""; data.draft = ""; save(); });
     }
 
     // Written pattern: open an import link, add it, follow a piece through rounds and copies, update it, delete it.

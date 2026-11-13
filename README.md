@@ -6,6 +6,7 @@ A phone app for following pixel crochet patterns one row at a time. It's a plain
 - Crochet mode: big color counts in stitching order, tap colors as you finish them, chart with the current row outlined, screen stays on
 - Progress is saved on the phone, separately for each style
 - New patterns from ready-made charts (grid found, checked and lined up automatically, then read square by square) or pixel art (sized to its blocks), with up to 10 colors, a border and yarn names. Real photos are turned away: they come out as blobs with too many colors
+- Pattern requests: in Notes, "Ask for a pattern" starts a note; the pattern comes back as a private import link (`tools/make_import_link.py` also takes chart patterns: kind "chart", id "c-...", 10 colors at most)
 - Written patterns made of pieces (like amigurumi projects): a project page with each piece's count, and a round-by-round follower with stitch counts. Added through private import links (`tools/make_import_link.py`)
 - Fix squares and colors on her own patterns: paint or fill squares, combine two colors, change a shade, rename yarns, add a color (up to 10), undo
 - Sign in with Google to sync patterns, progress and notes between devices

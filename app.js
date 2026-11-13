@@ -204,7 +204,7 @@ function renderHome() {
     ${backupCardHtml()}
     <button class="card pattern-card" data-go="#feedback" style="grid-template-columns:48px minmax(0,1fr)">
       <span class="note-icon" aria-hidden="true">${BUBBLE_SVG}</span>
-      <span><b>Ideas or problems?</b><span class="muted small">Write a note any time and send it when you're ready.${pendingNotes().length ? ` <b style="display:inline;font-size:1em;color:var(--accent)">${pendingNotes().length} waiting to send.</b>` : ""}</span></span>
+      <span><b>Ideas, problems, or a pattern wish?</b><span class="muted small">Write a note any time and send it when you're ready.${pendingNotes().length ? ` <b style="display:inline;font-size:1em;color:var(--accent)">${pendingNotes().length} waiting to send.</b>` : ""}</span></span>
     </button>
     ${Math.random() < 0.1 ? loveLine() : ""}
   </div>`;
@@ -547,6 +547,8 @@ function renderFeedback() {
       <textarea id="noteText" rows="5" placeholder="What's on your mind? Something confusing, a wish, a problem..."
         style="width:100%;min-height:140px;border-radius:12px;border:1px solid var(--line);padding:12px;font:inherit;background:var(--surface);color:var(--ink);resize:vertical">${esc(data.draft || "")}</textarea>
       <p class="small muted" style="margin:0">Tip: tap the microphone on your keyboard to talk instead of typing.</p>
+      <p class="small" style="margin:0"><button class="linkbtn" data-act="ask-pattern" style="min-height:0;padding:0">Ask for a pattern</button>:
+        describe what you'd like, or add a picture of it, and send. It comes back as a link you tap to add it.</p>
       ${where ? `<label class="check"><input type="checkbox" id="includeWhere" ${data.settings.includeWhere ? "checked" : ""}>
         <span>Add where I am: <b>${esc(where)}</b></span></label>` : ""}
       ${attachHtml()}
@@ -585,6 +587,13 @@ app.addEventListener("click", async e => {
     save(); return render();
   }
   const act = t.dataset.act;
+  if (act === "ask-pattern") {
+    const box = document.getElementById("noteText");
+    if (!/^pattern request/i.test(box.value)) box.value = "Pattern request: " + box.value;
+    data.draft = box.value; save();
+    box.focus(); box.setSelectionRange(box.value.length, box.value.length);
+    return;
+  }
   if (act === "save-note") { feedbackMsg = saveDraftAsNote() ? "Saved. Send it whenever you like." : "Write a note first."; return render(); }
   if (act === "send-notes") return sendNotes(false);
   if (act === "share-notes") return sendNotes(true);

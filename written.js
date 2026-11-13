@@ -68,7 +68,14 @@ async function decodeImport(code) {
   const b64 = code.replace(/-/g, "+").replace(/_/g, "/"), bin = atob(b64 + "=".repeat((4 - b64.length % 4) % 4));
   const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
   const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();
-  return cleanProject(JSON.parse(text));
+  const o = JSON.parse(text);
+  if (o && o.kind === "chart") {   // a chart pattern (made for her from a request); checked like a backup's
+    if (!/^c-[a-z0-9-]{1,40}$/.test(o.id || "")) throw new Error("That link isn't a Row by Row pattern.");
+    const c = cleanChart(o);
+    if (c.colors.length > MAX_COLORS) throw new Error("too many colors");
+    return { ...c, kind: "chart" };
+  }
+  return cleanProject(o);
 }
 
 // ---------- her place in a piece ----------
@@ -205,6 +212,7 @@ async function renderImport(code) {
     console.warn("import:", e && e.message);
     return;
   }
+  if (proj.kind === "chart") return renderChartImport(proj);
   const have = findProject(proj.id), ready = proj.pieces.filter(pc => (pc.parts || []).length).length;
   app.innerHTML = `
   <div class="screen stack">
@@ -223,6 +231,35 @@ async function renderImport(code) {
     data.patterns[proj.id] = { ...proj, created: have ? have.created : Date.now() };
     if (!save()) return;                      // the warning at the top explains
     history.replaceState(null, "", `#project/${proj.id}`);   // so going back doesn't import again
+    render();
+  };
+}
+
+// A chart pattern from a link: a picture of it, its size and yarns, then add (or update, keeping her place).
+function renderChartImport(c) {
+  const have = data.patterns[c.id] && !data.patterns[c.id].deleted && data.patterns[c.id].grid;
+  const W = c.grid[0].length, H = c.grid.length, counts = {};
+  c.grid.join("").split("").forEach(k => counts[k] = (counts[k] || 0) + 1);
+  app.innerHTML = `
+  <div class="screen stack">
+    <div class="topbar"><h1>Add a pattern</h1></div>
+    <div class="card stack">
+      <canvas id="impChart" aria-label="The pattern" style="align-self:center;justify-self:center;border-radius:8px"></canvas>
+      <b style="font-size:1.3em">${esc(c.name)}</b>
+      <p class="small muted" style="margin:0">${W} × ${H} squares, ${c.colors.length} colors:
+        ${c.colors.map(k => esc(k.name || colorName(k.hex))).join(", ")}.</p>
+      ${have ? `<p class="tip" style="margin:0">You already have this pattern. Updating it keeps your place in it.</p>` : ""}
+      <button class="btn primary" id="impAdd">${have ? "Update my pattern" : "Add to my patterns"}</button>
+      <button class="btn quiet" data-go="#home">Not now</button>
+    </div>
+  </div>`;
+  const cell = Math.max(2, Math.floor(Math.min(innerWidth - 80, 520) / Math.max(W, H * 0.75)));
+  drawChart(document.getElementById("impChart"), c, { cell });
+  document.getElementById("impAdd").onclick = () => {
+    data.patterns[c.id] = { id: c.id, name: c.name, grid: c.grid, colors: c.colors.map(k => ({ ...k, name: k.name || colorName(k.hex) })),
+      created: have ? data.patterns[c.id].created || Date.now() : Date.now() };
+    if (!save()) return;
+    history.replaceState(null, "", `#pattern/${c.id}`);
     render();
   };
 }
