@@ -159,11 +159,18 @@ window.addEventListener("resize", () => {
 });
 
 function render() {
-  const [view, id] = route();
+  const [view, id, sub] = route();
   const p = findPattern(id);
-  if (view !== "work") releaseWakeLock();
+  if (view !== "work" && view !== "piece") releaseWakeLock();
   if ((view === "pattern" || view === "work") && p) lastPlace = { view, id };
   if (view === "feedback") return renderFeedback();
+  if (view === "import" && id) return renderImport(id);
+  const proj = (view === "project" || view === "piece") && findProject(id);
+  if (proj) {
+    const pc = view === "piece" && proj.pieces.find(x => x.id === sub);
+    lastPlace = pc ? { view, id, sub } : { view, id };
+    return pc ? renderPiece(proj, pc) : renderProject(proj);
+  }
   if (view === "new" && draft) return renderNew();
   if (view === "edit" && p && !p.builtIn) return renderEdit(p);
   if (view === "pattern" && p) return renderPattern(p);
@@ -177,7 +184,8 @@ function renderHome() {
     <div class="topbar"><h1 id="appTitle">Row by Row</h1>${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button></div>
     <p class="muted">Pick a pattern to keep crocheting.</p>
     ${homeMsg ? `<p class="tip" role="status" style="margin:0">${esc(homeMsg)}</p>` : ""}
-    ${allPatterns().sort((a, b) => lastUsed(b) - lastUsed(a)).map(p => {
+    ${[...allPatterns(), ...myProjects()].sort((a, b) => lastUsed(b) - lastUsed(a)).map(p => {
+      if (p.kind === "written") return projectCard(p);
       const steps = stepsFor(p), pr = progressFor(p), pf = prefsFor(p);
       const done = Math.min(pr.step, steps.length);
       return `<button class="card pattern-card" data-go="#pattern/${p.id}">
@@ -410,7 +418,7 @@ const CLOUD_SVG = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" s
 // Called by sync.js. Redraw unless she's typing a note.
 function onSyncChange(remoteChanged) {
   const v = route()[0];
-  if (v === "home" || ((v === "pattern" || v === "work") && remoteChanged)) render();
+  if (v === "home" || (["pattern", "work", "project", "piece"].includes(v) && remoteChanged)) render();
 }
 window.RBR = { getData: () => data, resnap, save, onSyncChange,
   persist };
@@ -434,6 +442,14 @@ const pendingNotes = () => data.notes.filter(n => !n.sent && !n.deleted);
 
 function whereText() {
   if (!lastPlace) return "";
+  const proj = findProject(lastPlace.id);
+  if (proj) {
+    const pc = proj.pieces.find(x => x.id === lastPlace.sub);
+    if (!pc) return proj.name;
+    const st = pieceState(proj, pc), s = st.steps[st.i];
+    return `${proj.name}, ${pc.name}${pc.count > 1 ? ` ${Math.min(st.made + 1, pc.count)} of ${pc.count}` : ""}, ` +
+      (st.done ? "finished" : `${s.part}${s.label ? ", " + s.label : ""}`);
+  }
   const p = findPattern(lastPlace.id); if (!p) return "";
   const pf = prefsFor(p), steps = stepsFor(p), pr = progressFor(p);
   const style = pf.mode === "c2c" ? "C2C" : `rows, ${pf.hand}-handed`;
@@ -497,7 +513,7 @@ async function sendNotes(viaShare) {
 function renderFeedback() {
   const pending = pendingNotes(), sent = data.notes.filter(n => n.sent && !n.deleted);
   const where = whereText();
-  const back = lastPlace ? `#${lastPlace.view}/${lastPlace.id}` : "#home";
+  const back = lastPlace ? `#${lastPlace.view}/${lastPlace.id}${lastPlace.sub ? "/" + lastPlace.sub : ""}` : "#home";
   const noteItem = (n, canDelete) => `
     <div class="note">
       <p style="margin:0;white-space:pre-wrap">${esc(n.text)}</p>

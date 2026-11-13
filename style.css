@@ -153,3 +153,16 @@ input[type="range"] { width: 100%; accent-color: var(--accent); min-height: 32px
   .love-toast .small { color: #e7a3c2; }
 }
 @media (prefers-reduced-motion: reduce) { .love-toast { animation: none; } }
+
+/* written patterns */
+.project-icon { width: 88px; height: 88px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
+.piece-card { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 12px; align-items: center; text-align: left; width: 100%; cursor: pointer; padding: 12px 14px; }
+.piece-card b { display: block; font-size: 1.05em; }
+.piece-card:disabled { opacity: .55; cursor: default; }
+.piece-card.is-done .piece-count { background: var(--done); color: #fff; }
+.piece-count { width: 52px; height: 52px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 800; font-size: 1.1em; }
+.step-text { font-size: 1.45em; font-weight: 600; line-height: 1.35; margin: 0; }
+.step-list { margin: 12px 0 8px; padding-left: 22px; display: grid; gap: 2px; }
+.step-list .linkbtn { text-align: left; color: var(--ink); font-weight: 400; min-height: 36px; }
+.step-list li.past .linkbtn { color: var(--muted); }
+.step-list li.now .linkbtn { color: var(--accent); font-weight: 700; }

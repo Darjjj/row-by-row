@@ -1,11 +1,11 @@
 // Phone-size check of Row by Row in headless Chrome, light and dark:
 // existing progress survives, a chart is read square for square, a photo becomes a pattern, crochet/rename/delete work.
 // Needs: puppeteer-core installed where node can find it, Chrome, and the app served on :5178
-// (python -m http.server 5178). Usage: node phone-check.js <chart.jpg> <photo.jpg> [transparent.png] [uneven.png]
+// (python -m http.server 5178). Usage: node phone-check.js <chart.jpg> <photo.jpg> [transparent.png] [uneven.png] [written.json]
 // (make the last two with: python tests/make-test-images.py <dir>)
 const puppeteer = require("puppeteer-core");
 const OUT = __dirname + "/shots/", URL = "http://127.0.0.1:5178/";
-const CHART = process.argv[2] || "C:/Projects/monster-graphghan/tools/original-chart.jpg", PHOTO = process.argv[3], CLEAR = process.argv[4], UNEVEN = process.argv[5];
+const CHART = process.argv[2] || "C:/Projects/monster-graphghan/tools/original-chart.jpg", PHOTO = process.argv[3], CLEAR = process.argv[4], UNEVEN = process.argv[5], WRITTEN = process.argv[6];
 require("fs").mkdirSync(OUT, { recursive: true });
 let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); if (!c) fails++; };
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -231,6 +231,47 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     await page.goto(URL + "#work/monster-duo", { waitUntil: "load" }); await page.reload({ waitUntil: "load" });
     ok(await page.evaluate(() => /Finished!/.test(document.body.innerText) && !!document.querySelector(".love")), "the finished screen has a note");
     await page.screenshot({ path: OUT + "love-finished.png", fullPage: true });
+
+    // Written pattern: open an import link, add it, follow a piece through rounds and copies, update it, delete it.
+    if (WRITTEN) {
+      const proj = JSON.parse(require("fs").readFileSync(WRITTEN, "utf8"));
+      const link = URL + "#import/" + require("zlib").deflateRawSync(Buffer.from(JSON.stringify(proj)), { level: 9 }).toString("base64url");
+      await page.goto(URL + "#home", { waitUntil: "load" });
+      await page.goto(link, { waitUntil: "load" }); await page.waitForSelector("#impAdd");
+      ok(/Add to my patterns/.test(await page.evaluate(() => document.body.innerText)), "an import link offers to add the pattern");
+      await page.screenshot({ path: OUT + "written-import.png" });
+      await page.click("#impAdd"); await page.waitForFunction(() => location.hash.startsWith("#project/"));
+      let txt = await page.evaluate(() => document.body.innerText);
+      ok(/0 of 28/.test(txt) && /Pattern not written yet/.test(txt) && /Strawberries/.test(txt), "the project page lists every piece, with 0 of 28 made");
+      await page.screenshot({ path: OUT + "written-project.png", fullPage: true }); await wait(400);
+      await page.click('[data-go$="/strawberries"]'); await page.waitForSelector('[data-wact="next"]');
+      const first = await page.evaluate(() => ({ title: document.querySelector(".topbar .title").innerText, step: document.querySelector(".row-title").innerText }));
+      ok(/Strawberries · 1 of 4/.test(first.title) && /Rd 1/.test(first.step) && /6 stitches/.test(first.step), `the piece opens at Rd 1 of number 1 (${first.title.split("\n").join(" / ")})`);
+      await page.screenshot({ path: OUT + "written-piece.png", fullPage: true }); await wait(400);
+      const n = await page.evaluate(() => expandSteps(findProject("w-hungry-caterpillar").pieces.find(p => p.id === "strawberries")).length);
+      for (let i = 0; i < n; i++) await page.click('[data-wact="next"]');
+      txt = await page.evaluate(() => document.body.innerText);
+      ok(/2 of 4/.test(txt) && /Number 1 is done/.test(txt) && /Rd 1/.test(txt), `after all ${n} steps, number 2 starts at Rd 1`);
+      await page.click("details.card summary");
+      await page.$eval('[data-wjump="9"]', el => el.scrollIntoView({ block: "center" }));   // clear of the fixed button bar
+      await page.click('[data-wjump="9"]');
+      ok(/Stuff the strawberry/.test(await page.evaluate(() => document.querySelector(".step-text").textContent)), "tapping a step in the list jumps there");
+      const where = await page.evaluate(() => { lastPlace = { view: "piece", id: "w-hungry-caterpillar", sub: "strawberries" }; return whereText(); });
+      ok(/Strawberries 2 of 4, Body \(red\)/.test(where), `notes know where she is (${where})`);
+      await page.evaluate(n => { const d = JSON.parse(localStorage.getItem("rowbyrow.v1")); d.progress["w-hungry-caterpillar|piece|strawberries"] = { step: 4 * n, inrow: 0, t: Date.now() };
+        localStorage.setItem("rowbyrow.v1", JSON.stringify(d)); }, n);
+      await page.reload({ waitUntil: "load" });
+      txt = await page.evaluate(() => document.body.innerText);
+      ok(/All 4 made!/.test(txt) && await page.evaluate(() => !!document.querySelector(".love")), "after all 4, it says so (with a little note)");
+      await page.goto(link, { waitUntil: "load" }); await page.waitForSelector("#impAdd");
+      ok(/Update my pattern/.test(await page.evaluate(() => document.body.innerText)), "opening the link again offers to update");
+      await page.click("#impAdd"); await page.waitForFunction(() => location.hash.startsWith("#project/"));
+      ok(/4 of 28/.test(await page.evaluate(() => document.body.innerText)), "updating keeps her progress (4 of 28)");
+      await page.goto(URL + "#home", { waitUntil: "load" });
+      ok(await page.evaluate(() => [...document.querySelectorAll(".pattern-card b")].some(b => /Hungry Caterpillar/.test(b.textContent))), "the project shows on the home screen");
+      await page.goto(URL + "#import/notreal", { waitUntil: "load" }); await wait(500);
+      ok(/didn't open/.test(await page.evaluate(() => document.body.innerText)), "a broken link explains itself");
+    }
 
     // Service worker: a full set is cached, and the app opens offline.
     await page.goto(URL + "#home", { waitUntil: "load" });

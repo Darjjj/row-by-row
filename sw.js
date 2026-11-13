@@ -1,6 +1,6 @@
 // Offline support: keep the app files on the phone. Bump VERSION when any file changes.
-const VERSION = "rbr-v14";
-const FILES = ["./", "index.html", "style.css", "app.js", "pattern.js", "picture.js", "builtin.js", "sync.js", "manifest.webmanifest",
+const VERSION = "rbr-v15";
+const FILES = ["./", "index.html", "style.css", "app.js", "pattern.js", "picture.js", "written.js", "builtin.js", "sync.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png"];
 
 // Install a complete set straight from the server ("reload" skips the browser's HTTP cache, which GitHub Pages
