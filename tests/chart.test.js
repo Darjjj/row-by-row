@@ -4,7 +4,7 @@ const fs = require("fs"), vm = require("vm"), path = require("path");
 const repo = path.join(__dirname, ".."), S = __dirname, ctx = { module: undefined };
 vm.createContext(ctx);
 for (const f of ["builtin.js", "picture.js"]) vm.runInContext(fs.readFileSync(path.join(repo, f), "utf8"), ctx);
-const { detectGrid, readChart, analyzePicture } = vm.runInContext("({ detectGrid, readChart, analyzePicture })", ctx);
+const { detectGrid, readChart, analyzePicture, nudgeGrid, refineGrid } = vm.runInContext("({ detectGrid, readChart, analyzePicture, nudgeGrid, refineGrid })", ctx);
 const P = vm.runInContext("BUILTIN_PATTERNS[0]", ctx);
 let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); if (!c) fails++; };
 const sameUpToLetters = (a, b) => {
@@ -26,6 +26,14 @@ for (const [name, w, h] of [["full", 1497, 1567], ["half", 748, 784], ["small", 
   if (!g) continue;
   const out = readChart(px, w, g);
   ok(sameUpToLetters(out.grid, picture), `${name}: every square matches Monster Duo (${out.colors.length} colors: ${out.colors.map(c => c.name).join(", ")})`);
+  if (name === "full") {   // the self-check leaves the right grid alone and corrects broken ones back
+    const same = (a, b) => a.cols === b.cols && a.rows === b.rows && Math.abs(a.x0 - b.x0) < 3 && Math.abs(a.y0 - b.y0) < 3;
+    ok(same(refineGrid(px, w, h, g), g), "self-check leaves the found grid alone");
+    for (const acts of [["left-out"], ["cols+"], ["rows-"], ["cols-", "rows+"]]) {
+      let b = g; for (const a of acts) b = nudgeGrid(b, a, w, h);
+      ok(same(refineGrid(px, w, h, b), g), `self-check corrects a grid broken by ${acts.join(" + ")}`);
+    }
+  }
 }
 
 // Synthetic: draw a grid as a chart image at an awkward square size, with or without grid lines, and margins.

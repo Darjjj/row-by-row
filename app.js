@@ -188,7 +188,7 @@ function renderHome() {
           <span class="small">${done >= steps.length ? "Finished" : `Row ${done + 1} of ${steps.length}`}</span>
         </span></button>`;
     }).join("")}
-    <button class="btn quiet" data-act="new-picture">＋ New pattern from a picture or chart</button>
+    <button class="btn quiet" data-act="new-picture">＋ New pattern from a chart or pixel art</button>
     <input type="file" id="picFile" accept="image/*" hidden>
     ${syncCardHtml()}
     <button class="card pattern-card" data-go="#feedback" style="grid-template-columns:48px minmax(0,1fr)">
@@ -598,7 +598,6 @@ app.addEventListener("click", e => {
 // ---------- new pattern from a picture ----------
 // The picture is kept in memory only; the finished grid is what gets saved and synced.
 let draft = null, homeMsg = "";
-const SS = 6;   // pixels sampled across each square, each way
 const MAX_COLORS = 10;   // the most yarn colors she wants in one project (6-10 is the sweet spot)
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const hexRgb = h => { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
@@ -620,63 +619,36 @@ function loadPicture(file) {
   });
 }
 
+// Patterns come from ready-made charts or pixel art only (real photos turn into blobs and too many colors).
+// Both are read the same way: a grid over the picture, one color per square from the middle of each square.
 async function startDraft(file) {
   app.innerHTML = `<div class="screen"><p class="muted" role="status">Reading the picture...</p></div>`;
   await new Promise(r => setTimeout(r, 30));   // let that show before the work starts
   let pic;
   try { pic = await loadPicture(file); }
-  catch (e) { homeMsg = "That file couldn't be opened as a picture. Try a JPG or PNG."; go("#home"); return render(); }
-  const px = pic.getContext("2d").getImageData(0, 0, pic.width, pic.height).data;
-  const { grid: found, pixel } = analyzePicture(px, pic.width, pic.height);
-  // A chart keeps its own colors (same-looking shades combined), up to the most she wants in a project.
-  const chartColors = found ? readChart(px, pic.width, found).distinct : 0;
-  // Uneven pixel art: size the pattern to its blocks, keep single-square details, and start near its own color count.
-  let W = 50, H = clamp(Math.round(W * pic.height / pic.width), 5, 150), k = 6;
-  const blocky = !found && pixel && pic.width / pixel <= 150 && pic.height / pixel <= 150;
-  if (blocky) {
-    W = clamp(Math.round(pic.width / pixel), 5, 150); H = clamp(Math.round(pic.height / pixel), 5, 150);
-    k = clamp(estimateColors(pic, W, H), 2, MAX_COLORS);
+  catch (e) { homeMsg = "That file couldn't be opened as a picture. Try a JPG or PNG."; return go("#home"); }
+  const w = pic.width, h = pic.height, px = pic.getContext("2d").getImageData(0, 0, w, h).data;
+  const { grid, pixel } = analyzePicture(px, w, h);
+  let found = null, kind = null;
+  if (grid) { found = refineGrid(px, w, h, grid); kind = "chart"; }   // and correct a near-miss
+  else if (pixel && w / pixel >= 5 && h / pixel >= 5 && w / pixel <= 150 && h / pixel <= 150) {
+    // Uneven pixel art: no exact reading, so a grid over the whole picture sized to its blocks.
+    found = { x0: 0, x1: w, y0: 0, y1: h, cols: Math.round(w / pixel), rows: Math.round(h / pixel) };
+    kind = "pixel";
   }
-  draft = { pic, px, found, g: found && { ...found }, mode: found ? "chart" : "photo", blocky,
-    chartColors, kChart: clamp(chartColors, 2, MAX_COLORS),
-    name: "", W, H, k, zoom: 1, cx: pic.width / 2, cy: pic.height / 2, tidy: !blocky,
-    border: 0, borderCode: "A", names: [], view: "pattern", result: null };
+  if (!found) {
+    homeMsg = "That picture doesn't look like a chart or pixel art, so it can't be made into a pattern. " +
+      "Row by Row works with ready-made charts and blocky pixel-art pictures.";
+    return go("#home");   // go() draws home once, with the message
+  }
+  const distinct = readChart(px, w, found).distinct;   // its own colors, with same-looking shades combined
+  draft = { pic, px, kind, found, g: { ...found }, distinct, k: clamp(distinct, 2, MAX_COLORS),
+    name: "", border: 0, borderCode: "A", names: [], view: "pattern", result: null };
   go("#new");
 }
 
-// Roughly how many yarn colors a picture really has at this size (same-looking shades count as one).
-function estimateColors(pic, W, H) {
-  const c = document.createElement("canvas"); c.width = W * SS; c.height = H * SS;
-  const ctx = c.getContext("2d", { willReadFrequently: true }); ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(pic, 0, 0, c.width, c.height);
-  const { labels, palette } = mergeDown(cellColors(ctx.getImageData(0, 0, c.width, c.height).data, W, H, SS, true), Infinity);
-  const counts = palette.map(() => 0); labels.forEach(l => counts[l]++);
-  return counts.filter(n => n >= Math.max(2, W * H * 0.002)).length;   // ignore stray in-between shades
-}
-
-// The part of the picture that fills the pattern: the pattern's shape, as big as fits, divided by zoom.
-function cropRect(d) {
-  const a = d.W / d.H, iw = d.pic.width, ih = d.pic.height;
-  let w = iw, h = iw / a;
-  if (h > ih) { h = ih; w = ih * a; }
-  w /= d.zoom; h /= d.zoom;
-  d.cx = clamp(d.cx, w / 2, iw - w / 2); d.cy = clamp(d.cy, h / 2, ih - h / 2);
-  return { x: d.cx - w / 2, y: d.cy - h / 2, w, h };
-}
-
 function computeDraft(d) {
-  let g;
-  if (d.mode === "chart") {
-    g = readChart(d.px, d.pic.width, d.g, d.kChart);
-  }
-  else {
-    const r = cropRect(d), c = document.createElement("canvas");
-    c.width = d.W * SS; c.height = d.H * SS;
-    const ctx = c.getContext("2d", { willReadFrequently: true });
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(d.pic, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
-    g = makeGrid(cellColors(ctx.getImageData(0, 0, c.width, c.height).data, d.W, d.H, SS, d.blocky), d.W, d.H, d.k, { tidy: d.tidy, blocky: d.blocky });
-  }
+  const g = readChart(d.px, d.pic.width, d.g, d.k);
   // Keep names she typed: each goes to the new color closest to the one she named, if it's still close.
   g.colors.forEach(col => {
     const lab = toLab(hexRgb(col.hex)); let best = null, bd = 0.0064;
@@ -692,54 +664,32 @@ function draftPattern(d) {
     colors: d.result.colors.map(({ code, name, hex }) => ({ code, name, hex })) };
 }
 
-// Grid fixes for a chart, each one square at a time. Returns false if it would leave the picture.
-function adjustGrid(d, act) {
-  const g = { ...d.g }, cw = (g.x1 - g.x0) / g.cols, ch = (g.y1 - g.y0) / g.rows;
-  const ops = {
-    "cols-": () => g.cols--, "cols+": () => g.cols++, "rows-": () => g.rows--, "rows+": () => g.rows++,
-    "left-out": () => { g.x0 -= cw; g.cols++; }, "left-in": () => { g.x0 += cw; g.cols--; },
-    "right-in": () => { g.x1 -= cw; g.cols--; }, "right-out": () => { g.x1 += cw; g.cols++; },
-    "top-out": () => { g.y0 -= ch; g.rows++; }, "top-in": () => { g.y0 += ch; g.rows--; },
-    "bottom-in": () => { g.y1 -= ch; g.rows--; }, "bottom-out": () => { g.y1 += ch; g.rows++; },
-    reset: () => Object.assign(g, d.found)
-  };
-  ops[act]();
-  const ok = g.cols >= 2 && g.rows >= 2 && g.cols <= 200 && g.rows <= 200 &&
-    g.x0 >= -0.5 && g.y0 >= -0.5 && g.x1 <= d.pic.width + 0.5 && g.y1 <= d.pic.height + 0.5;
-  if (ok) d.g = g;
-  return ok;
-}
-
 function renderNew() {
-  const d = draft, chart = d.mode === "chart";
+  const d = draft, chart = d.kind === "chart";
   if (!d.result) computeDraft(d);
   const step = (act, label, aria) => `<button class="iconbtn" data-adj="${act}" aria-label="${aria}">${label}</button>`;
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar"><button class="iconbtn" id="dCancel" aria-label="Cancel">←</button>
-      <div class="title"><b>New pattern</b><span>${chart ? "From a chart" : "From a picture"}</span></div></div>
-    ${d.blocky && !chart ? `<p class="tip" style="margin:0">This looks like pixel art with uneven squares, so it can't be read exactly.
-      The size is set to match its squares (${d.W} × ${d.H}). Check it against the Picture view.</p>` : ""}
-    ${d.found ? `<div class="card stack">
-      <p style="margin:0">${chart ? "This looks like a chart, so each square is read exactly." : "Reading it as a photo: the colors are simplified to fit the size you pick."}</p>
-      <div class="seg" role="group" aria-label="Read the picture as">
-        <button data-mode-pick="chart" aria-pressed="${chart}">Chart squares</button>
-        <button data-mode-pick="photo" aria-pressed="${!chart}">Photo</button></div></div>` : ""}
+      <div class="title"><b>New pattern</b><span>${chart ? "From a chart" : "From pixel art"}</span></div></div>
+    <p class="tip" style="margin:0">${chart
+      ? "This looks like a chart, so each square is read exactly."
+      : `This is pixel art with uneven squares, so it can't be read exactly. It's sized to match its squares (${d.found.cols} × ${d.found.rows}).`}</p>
     <div class="seg" role="group" aria-label="Show">
       <button data-view="pattern" aria-pressed="${d.view === "pattern"}">Pattern</button>
       <button data-view="photo" aria-pressed="${d.view === "photo"}">${chart ? "Chart" : "Picture"}</button></div>
     <div class="chart-wrap editor-preview" id="chartWrap"><canvas id="chart" aria-label="Preview"></canvas></div>
-    <p class="small muted" style="margin:-6px 0 0">${chart
-      ? "Tap Chart to check that the pink lines sit on the chart's lines."
-      : "Drag to move the picture. Pinch or use Zoom to fill more of it."}</p>
+    <p class="small muted" style="margin:-6px 0 0">Tap ${chart ? "Chart" : "Picture"} to check that the pink lines sit on its squares.</p>
     <div class="card stack">
       <div><label class="field-label" for="dName">Name</label>
         <input id="dName" class="text-input" value="${esc(d.name)}" placeholder="My pattern" maxlength="60" enterkeyhint="done"></div>
-      ${chart ? `<p class="small muted" id="dSize" style="margin:0"></p>
-      ${d.chartColors > 2 ? `<div><label class="field-label" for="dKc">Colors: up to <span id="dKcv">${d.kChart}</span></label>
-        <input id="dKc" type="range" min="2" max="${clamp(d.chartColors, 2, MAX_COLORS)}" step="1" value="${d.kChart}"></div>` : ""}
-      ${d.chartColors > MAX_COLORS ? `<p class="small muted" style="margin:-6px 0 0">This chart has ${d.chartColors} colors, so the closest ones are combined to keep it to ${MAX_COLORS}.</p>` : ""}
-      <details class="adjust"><summary><b>Grid doesn't line up?</b></summary>
+      ${chart ? "" : `<div><label class="field-label" for="dW">Width in squares</label>
+        <input id="dW" class="text-input" type="number" inputmode="numeric" min="5" max="150" value="${d.g.cols}"></div>`}
+      <p class="small muted" id="dSize" style="margin:-4px 0 0"></p>
+      ${d.distinct > 2 ? `<div><label class="field-label" for="dK">Colors: up to <span id="dKv">${d.k}</span></label>
+        <input id="dK" type="range" min="2" max="${clamp(d.distinct, 2, MAX_COLORS)}" step="1" value="${d.k}"></div>` : ""}
+      ${d.distinct > MAX_COLORS ? `<p class="small muted" style="margin:-6px 0 0">It has ${d.distinct} colors, so the closest ones are combined to keep it to ${MAX_COLORS}.</p>` : ""}
+      ${chart ? `<details class="adjust"><summary><b>Grid doesn't line up?</b></summary>
         <div class="adjust-grid">
           <span>Columns</span>${step("cols-", "−", "Fewer columns")}<b id="dCols">${d.g.cols}</b>${step("cols+", "+", "More columns")}
           <span>Rows</span>${step("rows-", "−", "Fewer rows")}<b id="dRows">${d.g.rows}</b>${step("rows+", "+", "More rows")}
@@ -748,19 +698,10 @@ function renderNew() {
           <span>Top edge</span>${step("top-out", "↑", "Move top edge out")}<i></i>${step("top-in", "↓", "Move top edge in")}
           <span>Bottom edge</span>${step("bottom-in", "↑", "Move bottom edge in")}<i></i>${step("bottom-out", "↓", "Move bottom edge out")}
         </div>
-        <p class="small muted" style="margin:8px 0 0">Columns and rows respace the whole grid. The edges add or remove one square at that side.</p>
+        <p class="small muted" style="margin:8px 0 0">The grid was checked and lined up automatically. These are here in case it still missed.
+          Columns and rows respace the whole grid; the edges add or remove one square at that side.</p>
         <button class="linkbtn" data-adj="reset">Start over with what was found</button>
-      </details>` : `
-      <div class="field-row">
-        <div><label class="field-label" for="dW">Width</label><input id="dW" class="text-input" type="number" inputmode="numeric" min="5" max="150" value="${d.W}"></div>
-        <div><label class="field-label" for="dH">Height</label><input id="dH" class="text-input" type="number" inputmode="numeric" min="5" max="150" value="${d.H}"></div>
-      </div>
-      <p class="small muted" id="dSize" style="margin:-4px 0 0"></p>
-      <div><label class="field-label" for="dZoom">Zoom</label>
-        <input id="dZoom" type="range" min="1" max="4" step="0.01" value="${d.zoom}"></div>
-      <div><label class="field-label" for="dK">Colors: up to <span id="dKv">${d.k}</span></label>
-        <input id="dK" type="range" min="2" max="${MAX_COLORS}" step="1" value="${d.k}"></div>
-      <label class="check"><input type="checkbox" id="dTidy" ${d.tidy ? "checked" : ""}><span>Tidy up stray single squares</span></label>`}
+      </details>` : ""}
       <div><div class="field-label">Border</div>
         <div class="seg" role="group" aria-label="Border width">${[0, 1, 2, 3].map(n =>
           `<button data-border="${n}" aria-pressed="${d.border === n}">${n ? n + " sq" : "None"}</button>`).join("")}</div>
@@ -773,18 +714,14 @@ function renderNew() {
   </div>`;
 
   let queued = false;
-  const update = recompute => {
+  const update = () => {
     if (queued) return; queued = true;
-    requestAnimationFrame(() => { queued = false; if (recompute) computeDraft(d); drawDraft(); });
+    requestAnimationFrame(() => { queued = false; computeDraft(d); drawDraft(); });
   };
   const $ = id => document.getElementById(id);
   $("dCancel").onclick = () => { draft = null; go("#home"); };
   $("dName").oninput = e => d.name = e.target.value;
   $("dName").onkeydown = e => { if (e.key === "Enter") e.target.blur(); };
-  app.querySelectorAll("[data-mode-pick]").forEach(b => b.onclick = () => {
-    if (d.mode === b.dataset.modePick) return;
-    d.mode = b.dataset.modePick; computeDraft(d); renderNew();
-  });
   app.querySelectorAll("[data-view]").forEach(b => b.onclick = () => {
     d.view = b.dataset.view;
     app.querySelectorAll("[data-view]").forEach(x => x.setAttribute("aria-pressed", x === b)); drawDraft();
@@ -801,51 +738,20 @@ function renderNew() {
     const lab = toLab(hexRgb(col.hex));
     d.names = d.names.filter(n => labDist2(n.lab, lab) >= 0.0064).concat({ lab, name: col.name });
   };
-
-  if (chart) {
-    if ($("dKc")) $("dKc").oninput = e => { d.kChart = +e.target.value; $("dKcv").textContent = d.kChart; update(true); };
-    app.querySelectorAll("[data-adj]").forEach(b => b.onclick = () => {
-      if (!adjustGrid(d, b.dataset.adj)) return;
-      $("dCols").textContent = d.g.cols; $("dRows").textContent = d.g.rows;
-      update(true);
-    });
-    return drawDraft();
-  }
-
-  const sizeBox = id => {
-    $(id).oninput = e => {
+  if ($("dK")) $("dK").oninput = e => { d.k = +e.target.value; $("dKv").textContent = d.k; update(); };
+  if ($("dW")) {   // pixel art: a smaller or bigger version, keeping the picture's shape
+    $("dW").oninput = e => {
       const v = parseInt(e.target.value, 10);
       if (!(v >= 5 && v <= 150)) return;
-      if (id === "dW") { d.H = clamp(Math.round(d.H * v / d.W), 5, 150); $("dH").value = d.H; d.W = v; }
-      else d.H = v;
-      update(true);
+      d.g = { ...d.g, cols: v, rows: clamp(Math.round(v * d.pic.height / d.pic.width), 5, 150) }; update();
     };
-    $(id).onchange = e => { e.target.value = id === "dW" ? d.W : d.H; };
-  };
-  sizeBox("dW"); sizeBox("dH");
-  $("dZoom").oninput = e => { d.zoom = +e.target.value; update(true); };
-  $("dK").oninput = e => { d.k = +e.target.value; $("dKv").textContent = d.k; update(true); };
-  $("dTidy").onchange = e => { d.tidy = e.target.checked; update(true); };
-
-  // Drag to move the picture, pinch to zoom.
-  const cv = $("chart"), pts = new Map();
-  cv.classList.add("draggable");
-  let pinch = 0;
-  cv.onpointerdown = e => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); pinch = 0; };
-  cv.onpointermove = e => {
-    if (!pts.has(e.pointerId)) return;
-    const [px, py] = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
-    if (pts.size === 1) {
-      const per = cropRect(d).w / d.W / d.cell;   // picture pixels per screen pixel
-      d.cx -= (e.clientX - px) * per; d.cy -= (e.clientY - py) * per;
-    } else {
-      const [a, b] = [...pts.values()], dist = Math.hypot(a[0] - b[0], a[1] - b[1]);
-      if (pinch) { d.zoom = clamp(d.zoom * dist / pinch, 1, 4); $("dZoom").value = d.zoom; }
-      pinch = dist;
-    }
-    update(true);
-  };
-  cv.onpointerup = cv.onpointercancel = e => { pts.delete(e.pointerId); pinch = 0; };
+    $("dW").onchange = e => { e.target.value = d.g.cols; };
+  }
+  app.querySelectorAll("[data-adj]").forEach(b => b.onclick = () => {
+    const g = b.dataset.adj === "reset" ? { ...d.found } : nudgeGrid(d.g, b.dataset.adj, d.pic.width, d.pic.height);
+    if (!g) return;
+    d.g = g; $("dCols").textContent = g.cols; $("dRows").textContent = g.rows; update();
+  });
   drawDraft();
 }
 
@@ -862,8 +768,8 @@ function drawDraft() {
   const wrap = document.getElementById("chartWrap"), cv = document.getElementById("chart");
   if (!wrap) return;
   const fit = (w, h) => Math.min((wrap.clientWidth - 2) / w, innerHeight * 0.5 / h);
-  if (d.view === "photo" && d.mode === "chart") {
-    // The chart itself with the grid it was read with drawn on top, half a square of margin around it.
+  if (d.view === "photo") {
+    // The picture with the grid it was read with drawn on top, half a square of margin around it.
     const g = d.g, cw = (g.x1 - g.x0) / g.cols, ch = (g.y1 - g.y0) / g.rows, cell = fit(g.cols + 1, g.rows + 1);
     const ctx = sizeCanvas(cv, (g.cols + 1) * cell, (g.rows + 1) * cell);
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, (g.cols + 1) * cell, (g.rows + 1) * cell);
@@ -872,19 +778,12 @@ function drawDraft() {
     for (let i = 0; i <= g.cols; i++) { const x = Math.round((i + 0.5) * cell) + 0.5; ctx.moveTo(x, cell / 2); ctx.lineTo(x, (g.rows + 0.5) * cell); }
     for (let j = 0; j <= g.rows; j++) { const y = Math.round((j + 0.5) * cell) + 0.5; ctx.moveTo(cell / 2, y); ctx.lineTo((g.cols + 0.5) * cell, y); }
     ctx.stroke();
-  } else if (d.view === "photo") {
-    const cell = fit(W, H), r = cropRect(d), b = d.border * cell;
-    d.cell = cell;
-    const ctx = sizeCanvas(cv, W * cell, H * cell);
-    ctx.fillStyle = p.colors.find(c => c.code === d.borderCode).hex; ctx.fillRect(0, 0, W * cell, H * cell);
-    ctx.drawImage(d.pic, r.x, r.y, r.w, r.h, b, b, d.W * cell, d.H * cell);
-  } else { d.cell = fit(W, H); drawChart(cv, p, { cell: d.cell }); }
+  } else drawChart(cv, p, { cell: fit(W, H) });
   const counts = {}; p.grid.join("").split("").forEach(k => counts[k] = (counts[k] || 0) + 1);
-  document.getElementById("dSize").textContent = d.mode === "chart"
-    ? `${W} × ${H} squares${d.border ? " with the border" : ""}, ${p.colors.length} colors.` +
-      (d.result.distinct > d.chartColors * 1.5 + 2 ? " The grid is picking up a lot more colors than before, which usually means it's off." : "")
-    : `${W} × ${H} squares${d.border ? " with the border" : ""}. In C2C with 1 in blocks, about ${W} × ${H} in.` +
-      (d.result.colors.length < d.k ? ` Shades that look the same were combined, so it's ${d.result.colors.length} colors.` : "");
+  const n = p.colors.length;
+  document.getElementById("dSize").textContent =
+    `${W} × ${H} squares${d.border ? " with the border" : ""}, ${n} color${n === 1 ? "" : "s"}. In C2C with 1 in blocks, about ${W} × ${H} in.` +
+    (d.kind === "chart" && d.result.distinct > d.distinct * 1.5 + 2 ? " The grid is picking up a lot more colors than before, which usually means it's off." : "");
   const list = document.getElementById("dColors");
   if (!list.contains(document.activeElement)) list.innerHTML = p.colors.map((c, i) => `
     <div class="key-row"><span class="sw" style="background:${c.hex}"></span><span class="code">${c.code}</span>

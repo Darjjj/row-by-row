@@ -2,12 +2,12 @@ const fs = require("fs"), vm = require("vm"), path = require("path");
 const dir = path.join(__dirname, ".."), ctx = { module: undefined };
 vm.createContext(ctx);
 for (const f of ["builtin.js", "picture.js"]) vm.runInContext(fs.readFileSync(path.join(dir, f), "utf8"), ctx);
-const { cellColors, makeGrid, addBorder, colorName, tidy } = vm.runInContext("({ cellColors, makeGrid, addBorder, colorName, tidy })", ctx);
-const { quantize, mergeDown } = vm.runInContext("({ quantize, mergeDown })", ctx);
+const { readChart, addBorder, colorName, mergeDown, misfit, nudgeGrid, refineGrid } =
+  vm.runInContext("({ readChart, addBorder, colorName, mergeDown, misfit, nudgeGrid, refineGrid })", ctx);
 const P = vm.runInContext("BUILTIN_PATTERNS[0]", ctx);
 let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); if (!c) fails++; };
 
-// Draw Monster Duo as an image, 6 px per square, then turn it back into a pattern.
+// Draw Monster Duo as pixel art, 6 px per square, then read it back with a grid over the whole picture.
 const W = P.grid[0].length, H = P.grid.length, S = 6, hex = {};
 P.colors.forEach(c => hex[c.code] = [1, 3, 5].map(i => parseInt(c.hex.slice(i, i + 2), 16)));
 const px = new Uint8ClampedArray(W * S * H * S * 4);
@@ -16,7 +16,8 @@ for (let y = 0; y < H * S; y++) for (let x = 0; x < W * S; x++) {
   px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = 255;
 }
 const t0 = Date.now();
-const out = makeGrid(cellColors(px, W, H, S), W, H, 10, { tidy: false });
+const whole = { x0: 0, x1: W * S, y0: 0, y1: H * S, cols: W, rows: H };
+const out = readChart(px, W * S, whole, 10);
 console.log(`     (${W}x${H}, 10 colors in ${Date.now() - t0} ms)`);
 // Same picture up to letter names: every original color maps to exactly one new letter.
 const map = {}, back = {}; let same = true;
@@ -30,14 +31,15 @@ ok(out.colors[0].code === "A" && out.colors.every((c, i) => !i || c.count <= out
 const names = out.colors.map(c => c.name);
 ok(new Set(names).size === names.length, "color names are unique: " + names.join(", "));
 
-// Fewer colors than asked for
-const two = makeGrid(cellColors(px, W, H, S), W, H, 12, { tidy: false });
-ok(two.colors.length === 10, "asking for 12 colors from a 10-color picture gives 10");
+// Fewer colors than asked for, and a limit below its own count
+ok(readChart(px, W * S, whole, 12).colors.length === 10, "allowing 12 colors from a 10-color picture gives 10");
+ok(readChart(px, W * S, whole, 6).colors.length === 6, "a 6-color limit gives 6");
 
-// Tidy removes a lone square but keeps a pair
-const L = [0,0,0,0, 0,1,0,0, 0,0,0,2, 0,0,0,2];
-const T = tidy(L, 4, 4);
-ok(T[5] === 0 && T[11] === 2 && T[15] === 2, "tidy removes a lone square, keeps a pair");
+// Grid self-check: the right grid has solid squares; a broken one gets corrected back.
+ok(misfit(px, W * S, whole) === 0, "the right grid scores 0 (every square solid)");
+const shifted = nudgeGrid(nudgeGrid(whole, "cols+", W * S, H * S), "rows-", W * S, H * S);
+const fixed = refineGrid(px, W * S, H * S, shifted);
+ok(fixed.cols === W && fixed.rows === H, `a grid with one column too many and one row too few is corrected (${fixed.cols} x ${fixed.rows})`);
 
 // Border
 const g = addBorder(["BC", "DE"], 1, "A");

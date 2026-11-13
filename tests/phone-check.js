@@ -1,10 +1,11 @@
 // Phone-size check of Row by Row in headless Chrome, light and dark:
 // existing progress survives, a chart is read square for square, a photo becomes a pattern, crochet/rename/delete work.
 // Needs: puppeteer-core installed where node can find it, Chrome, and the app served on :5178
-// (python -m http.server 5178). Usage: node phone-check.js <chart.jpg> <photo.jpg> [transparent-chart.png]
+// (python -m http.server 5178). Usage: node phone-check.js <chart.jpg> <photo.jpg> [transparent.png] [uneven.png]
+// (make the last two with: python tests/make-test-images.py <dir>)
 const puppeteer = require("puppeteer-core");
 const OUT = __dirname + "/shots/", URL = "http://127.0.0.1:5178/";
-const CHART = process.argv[2] || "C:/Projects/monster-graphghan/tools/original-chart.jpg", PHOTO = process.argv[3], CLEAR = process.argv[4];
+const CHART = process.argv[2] || "C:/Projects/monster-graphghan/tools/original-chart.jpg", PHOTO = process.argv[3], CLEAR = process.argv[4], UNEVEN = process.argv[5];
 require("fs").mkdirSync(OUT, { recursive: true });
 let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); if (!c) fails++; };
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -37,9 +38,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 
     // ---- the chart: should open in chart mode and read Monster Duo exactly
     await pick(CHART);
-    let ed = await page.evaluate(() => ({ chart: document.querySelector('[data-mode-pick="chart"]')?.getAttribute("aria-pressed"),
-      size: document.getElementById("dSize").textContent, scrollW: document.documentElement.scrollWidth }));
-    ok(ed.chart === "true" && /49 × 60 squares, 10 colors/.test(ed.size), `${scheme}: chart detected: ${ed.size}`);
+    let ed = await page.evaluate(() => ({ kind: draft.kind, size: document.getElementById("dSize").textContent, scrollW: document.documentElement.scrollWidth }));
+    ok(ed.kind === "chart" && /49 × 60 squares, 10 colors/.test(ed.size), `${scheme}: chart detected: ${ed.size}`);
     ok(ed.scrollW <= 375, `${scheme}: no sideways scrolling (${ed.scrollW}px)`);
     await page.screenshot({ path: OUT + `chart-editor-${scheme}.png`, fullPage: true }); await wait(400);
     await page.click('[data-view="photo"]'); await wait(100);
@@ -104,28 +104,36 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     }
 
 
-    // ---- a photo: no chart banner, photo controls, then save
+    // ---- a real photo is turned away: patterns come from charts and pixel art only
     if (PHOTO) {
       await page.goto(URL + "#home", { waitUntil: "load" });
-      await pick(PHOTO);
-      ed = await page.evaluate(() => ({ banner: !!document.querySelector("[data-mode-pick]"), colors: document.querySelectorAll("#dColors .key-row").length }));
-      ok(!ed.banner && ed.colors >= 2 && ed.colors <= 6, `${scheme}: photo opens as a photo with up to 6 colors (${ed.colors})`);
-      await page.$eval("#dK", el => { el.value = 8; el.dispatchEvent(new Event("input", { bubbles: true })); });
-      await page.click('[data-border="2"]');
-      await page.$eval('#dColors input[data-i="0"]', el => { el.value = "Sky Blue Caron"; el.dispatchEvent(new Event("input", { bubbles: true })); });
-      const box = await (await page.$("#chart")).boundingBox();
-      await page.mouse.move(box.x + 100, box.y + 100); await page.mouse.down(); await page.mouse.move(box.x + 60, box.y + 70, { steps: 5 }); await page.mouse.up();
-      await wait(200);
-      await page.screenshot({ path: OUT + `photo-editor-${scheme}.png`, fullPage: true }); await wait(400);
-      await page.click("#dSave"); await page.waitForFunction(() => location.hash.startsWith("#pattern/p"));
-      const saved = await page.evaluate(() => { const ps = Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns), p = ps.find(x => x.name === "My pattern");
-        return p && { w: p.grid[0].length, n: p.colors.length, names: p.colors.map(c => c.name) }; });
-      ok(saved && saved.w === 54 && saved.n <= 8 && saved.names.includes("Sky Blue Caron"), `${scheme}: photo saved ${saved && saved.w + " wide, " + saved.n + " colors"} (up to 8), yarn name kept`);
-      // Never more than 10 yarn colors, and no two that would look like the same yarn.
-      const limits = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns).filter(p => p.grid)
-        .every(p => p.colors.length <= 10 && p.colors.every((a, i) => p.colors.every((b, j) => j <= i || !sameYarn(toLab(hexRgb(a.hex)), toLab(hexRgb(b.hex)))))));
-      ok(limits, `${scheme}: saved patterns have at most 10 colors and no same-looking pair`);
+      const [chooser] = await Promise.all([page.waitForFileChooser(), page.click('[data-act="new-picture"]')]);
+      await chooser.accept([PHOTO]); await wait(1500);
+      const r = await page.evaluate(() => ({ hash: location.hash, draft: !!draft, msg: (document.querySelector(".tip") || {}).textContent || "" }));
+      ok(r.hash === "#home" && !r.draft && /doesn't look like a chart or pixel art/.test(r.msg), `${scheme}: a photo is turned away with an explanation`);
+      await page.screenshot({ path: OUT + `photo-refused-${scheme}.png` });
     }
+
+    // ---- uneven pixel art: sized to its blocks, width adjustable, at most 10 colors
+    if (UNEVEN) {
+      await page.goto(URL + "#home", { waitUntil: "load" });
+      await pick(UNEVEN);
+      const px0 = await page.evaluate(() => ({ kind: draft.kind, cols: draft.g.cols, rows: draft.g.rows, tip: document.querySelector(".tip").textContent }));
+      ok(px0.kind === "pixel" && /uneven squares/.test(px0.tip) && px0.cols >= 40 && px0.cols <= 60, `${scheme}: uneven pixel art opens as pixel art at ${px0.cols} x ${px0.rows}`);
+      await page.click("#dW", { clickCount: 3 }); await page.type("#dW", "40"); await wait(200);
+      const sz = await page.evaluate(() => document.getElementById("dSize").textContent);
+      ok(/^40 × \d+ squares/.test(sz), `${scheme}: width box resizes it, keeping its shape (${sz.split(".")[0]})`);
+      await page.click('[data-view="photo"]'); await wait(100);
+      await page.screenshot({ path: OUT + `pixel-editor-${scheme}.png`, fullPage: true }); await wait(400);
+      await page.type("#dName", "Pixel " + scheme);
+      await page.click("#dSave"); await page.waitForFunction(() => location.hash.startsWith("#pattern/p"));
+      const pw = await page.evaluate(n => Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns).find(p => p.name === n), "Pixel " + scheme);
+      ok(pw && pw.grid[0].length === 40 && pw.colors.length <= 10, `${scheme}: pixel art saved 40 wide with ${pw && pw.colors.length} colors`);
+    }
+    // Never more than 10 yarn colors, and no two that would look like the same yarn.
+    const limits = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns).filter(p => p.grid)
+      .every(p => p.colors.length <= 10 && p.colors.every((a, i) => p.colors.every((b, j) => j <= i || !sameYarn(toLab(hexRgb(a.hex)), toLab(hexRgb(b.hex)))))));
+    ok(limits, `${scheme}: saved patterns have at most 10 colors and no same-looking pair`);
 
     // ---- crochet the chart pattern, check order, rename, delete
     await page.goto(URL + "#home", { waitUntil: "load" });
@@ -192,7 +200,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       await page.goto(URL + "#home", { waitUntil: "load" });
       const [chooser] = await Promise.all([page.waitForFileChooser(), page.click('[data-act="new-picture"]')]);
       await chooser.accept([CLEAR]); await page.waitForSelector("#dSave"); await wait(300);
-      const size = await page.evaluate(() => draft.mode + " " + document.getElementById("dSize").textContent);
+      const size = await page.evaluate(() => draft.kind + " " + document.getElementById("dSize").textContent);
       ok(/^chart 51 × 60 squares/.test(size), `transparent pixel art (random colors hidden under the clear parts) reads as the chart (${size})`);
       await page.type("#dName", "Clear chart");
       await breakStorage(true); await page.click("#dSave"); await wait(200);

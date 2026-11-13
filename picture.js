@@ -1,27 +1,5 @@
-// Turns a picture into a color grid. Pure functions on pixel data (no DOM), so they can be tested.
-
-// Average color of each square. px: RGBA bytes of the cropped picture drawn at W*S x H*S pixels.
-// Transparent pixels count as white. median: use each square's middle color instead, which keeps
-// blocky pictures from turning their blurry edges into extra in-between shades.
-function cellColors(px, W, H, S, median) {
-  const out = [], rowLen = W * S * 4;
-  if (median) {
-    const g = { x0: 0, x1: W * S, y0: 0, y1: H * S, cols: W, rows: H };
-    return chartCells(px, W * S, g);
-  }
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    let r = 0, g = 0, b = 0;
-    for (let dy = 0; dy < S; dy++) {
-      let i = (y * S + dy) * rowLen + x * S * 4;
-      for (let dx = 0; dx < S; dx++, i += 4) {
-        const a = px[i + 3] / 255, w = 255 * (1 - a);
-        r += px[i] * a + w; g += px[i + 1] * a + w; b += px[i + 2] * a + w;
-      }
-    }
-    const n = S * S; out.push([r / n, g / n, b / n]);
-  }
-  return out;
-}
+// Turns a chart or pixel-art picture into a color grid: finds and checks the grid, reads each square,
+// and combines colors. Pure functions on pixel data (no DOM), so they can be tested.
 
 // OKLab: distances in it match how different two colors look.
 function toLab([r, g, b]) {
@@ -68,25 +46,6 @@ function quantize(rgbs, k) {
   const sums = cents.map(() => [0, 0, 0, 0]);
   for (let j = 0; j < n; j++) { const s = sums[labels[j]]; s[0] += rgbs[j][0]; s[1] += rgbs[j][1]; s[2] += rgbs[j][2]; s[3]++; }
   return { labels, palette: sums.map(s => s[3] ? [s[0] / s[3], s[1] / s[3], s[2] / s[3]] : null) };
-}
-
-// A square whose 8 neighbors are all other colors becomes the most common neighbor color.
-function tidy(labels, W, H) {
-  const out = labels.slice();
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const me = labels[y * W + x], count = {};
-    let same = false;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      if (!dx && !dy) continue;
-      const yy = y + dy, xx = x + dx;
-      if (yy < 0 || yy >= H || xx < 0 || xx >= W) continue;
-      const l = labels[yy * W + xx];
-      if (l === me) { same = true; break; }
-      count[l] = (count[l] || 0) + 1;
-    }
-    if (!same) out[y * W + x] = +Object.keys(count).sort((a, b) => count[b] - count[a])[0];
-  }
-  return out;
 }
 
 // Rough everyday name for a yarn color, e.g. "Dark blue", "Pale pink", "Light gray".
@@ -154,14 +113,6 @@ function mergeDown(rgbs, k, init) {
   const sums = groups.map(() => [0, 0, 0, 0]);
   rgbs.forEach((c, j) => { const s = sums[labels[j]]; s[0] += c[0]; s[1] += c[1]; s[2] += c[2]; s[3]++; });
   return { labels, palette: sums.map(s => s[3] ? [s[0] / s[3], s[1] / s[3], s[2] / s[3]] : null), distinct };
-}
-
-// Everything together: square colors -> a pattern grid with lettered colors, most-used color first.
-// Returns { grid: [strings, top row first], colors: [{code, name, hex, count}] }.
-function makeGrid(rgbs, W, H, k, opts = {}) {
-  let { labels, palette, distinct } = mergeDown(rgbs, k, opts.blocky ? undefined : quantize(rgbs, k));
-  if (opts.tidy) labels = tidy(labels, W, H);
-  return { ...letterGrid(labels, palette, W, H), distinct };
 }
 
 // Color index per square + palette -> lettered grid and named colors, most-used color first.
@@ -383,6 +334,64 @@ function readChart(px, w, g, k = Infinity) {
   return { ...letterGrid(labels, palette, g.cols, g.rows), distinct };
 }
 
+// ---------- checking and correcting a grid ----------
+// A grid that lines up gives solid squares; one that's off makes squares straddle two colors.
+
+// How badly a grid fits: for each square, the share of points inside it that aren't the square's own color,
+// added up over all squares (so a wrong extra column costs about its height, and a blank one costs nothing).
+function misfit(px, w, g) {
+  const cw = (g.x1 - g.x0) / g.cols, ch = (g.y1 - g.y0) / g.rows, n = 5, h = px.length / 4 / w;
+  let total = 0;
+  const R = new Array(n * n), G = new Array(n * n), B = new Array(n * n);
+  for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
+    let m = 0;
+    for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) {
+      const x = clampI(Math.round(g.x0 + (c + 0.22 + 0.56 * b / (n - 1)) * cw), w);
+      const y = clampI(Math.round(g.y0 + (r + 0.22 + 0.56 * a / (n - 1)) * ch), h);
+      const i = (y * w + x) * 4; R[m] = px[i]; G[m] = px[i + 1]; B[m] = px[i + 2]; m++;
+    }
+    const mid = v => v.slice().sort((p, q) => p - q)[(n * n) >> 1], mr = mid(R), mg = mid(G), mb = mid(B);
+    let off = 0;
+    for (let k = 0; k < m; k++) if (Math.abs(R[k] - mr) + Math.abs(G[k] - mg) + Math.abs(B[k] - mb) > 60) off++;
+    total += off / m;
+  }
+  return total;
+}
+
+// One square's worth of change to a grid, or null if it would leave the picture.
+// Columns/rows respace the whole grid; the edges add or remove one square at that side.
+const NUDGES = ["cols-", "cols+", "rows-", "rows+", "left-out", "left-in", "right-in", "right-out", "top-out", "top-in", "bottom-in", "bottom-out"];
+function nudgeGrid(g0, act, w, h) {
+  const g = { ...g0 }, cw = (g.x1 - g.x0) / g.cols, ch = (g.y1 - g.y0) / g.rows;
+  ({
+    "cols-": () => g.cols--, "cols+": () => g.cols++, "rows-": () => g.rows--, "rows+": () => g.rows++,
+    "left-out": () => { g.x0 -= cw; g.cols++; }, "left-in": () => { g.x0 += cw; g.cols--; },
+    "right-in": () => { g.x1 -= cw; g.cols--; }, "right-out": () => { g.x1 += cw; g.cols++; },
+    "top-out": () => { g.y0 -= ch; g.rows++; }, "top-in": () => { g.y0 += ch; g.rows--; },
+    "bottom-in": () => { g.y1 -= ch; g.rows--; }, "bottom-out": () => { g.y1 += ch; g.rows++; }
+  })[act]();
+  const ok = g.cols >= 2 && g.rows >= 2 && g.cols <= 200 && g.rows <= 200 &&
+    g.x0 >= -0.5 && g.y0 >= -0.5 && g.x1 <= w + 0.5 && g.y1 <= h + 0.5;
+  return ok ? g : null;
+}
+
+// Try every one-square change and keep the one that makes the squares most solid, until none helps by at
+// least about a square's worth. Catches an extra column from a frame, a missed edge row, slightly wrong spacing.
+function refineGrid(px, w, h, g) {
+  let best = g, score = misfit(px, w, g);
+  for (let round = 0; round < 8; round++) {
+    let pick = null, pickScore = score - Math.max(1, score * 0.05);
+    for (const act of NUDGES) {
+      const c = nudgeGrid(best, act, w, h); if (!c) continue;
+      const s = misfit(px, w, c);
+      if (s < pickScore) { pick = c; pickScore = s; }
+    }
+    if (!pick) break;
+    best = pick; score = pickScore;
+  }
+  return best;
+}
+
 // Put a border of one color around a grid.
 function addBorder(grid, size, code) {
   if (!size) return grid.slice();
@@ -390,5 +399,5 @@ function addBorder(grid, size, code) {
   return [...Array(size).fill(full), ...grid.map(r => edge + r + edge), ...Array(size).fill(full)];
 }
 
-if (typeof module !== "undefined") module.exports = { cellColors, toLab, labDist2, toHex, quantize, mergeDown, sameYarn, tidy, colorName, makeGrid, letterGrid,
-  edgeProfiles, lineComb, fitLines, detectGrid, analyzePicture, chartCells, groupColors, readChart, addBorder };
+if (typeof module !== "undefined") module.exports = { toLab, labDist2, toHex, quantize, mergeDown, sameYarn, colorName, letterGrid,
+  edgeProfiles, lineComb, fitLines, detectGrid, analyzePicture, misfit, nudgeGrid, refineGrid, chartCells, groupColors, readChart, addBorder };
