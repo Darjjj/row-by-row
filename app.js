@@ -163,6 +163,7 @@ function render() {
   const p = findPattern(id);
   if (view !== "work" && view !== "piece") releaseWakeLock();
   if ((view === "pattern" || view === "work") && p) lastPlace = { view, id };
+  if (view === "new" && draft) lastPlace = { view };
   if (view === "feedback") return renderFeedback();
   if (view === "backup") return renderBackup();
   if (view === "import" && id) return renderImport(id);
@@ -419,6 +420,7 @@ const CLOUD_SVG = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" s
 
 // Called by sync.js. Redraw unless she's typing a note.
 function onSyncChange(remoteChanged) {
+  if (window.syncState().status === "synced") uploadAtts();
   const v = route()[0];
   if (v === "home" || (["pattern", "work", "project", "piece"].includes(v) && remoteChanged)) render();
 }
@@ -437,13 +439,14 @@ app.addEventListener("click", e => {
 const BUBBLE_SVG = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5" stroke-linecap="round"/></svg>`;
 const NOTES_BTN = `<button class="iconbtn" data-go="#feedback" aria-label="Write a note or idea">${BUBBLE_SVG}</button>`;
 let lastPlace = null;
-let feedbackMsg = "";
+let feedbackMsg = "", attNoRoom = false;
 if (!data.notes) data.notes = [];
 if (data.settings.includeWhere === undefined) data.settings.includeWhere = true;
 const pendingNotes = () => data.notes.filter(n => !n.sent && !n.deleted);
 
 function whereText() {
   if (!lastPlace) return "";
+  if (lastPlace.view === "new") return draft ? `Making a new pattern, ${draft.g.cols} × ${draft.g.rows} ${draft.kind === "chart" ? "from a chart" : "from pixel art"}` : "";
   const proj = findProject(lastPlace.id);
   if (proj) {
     const pc = proj.pieces.find(x => x.id === lastPlace.sub);
@@ -463,7 +466,9 @@ function saveDraftAsNote() {
   const box = document.getElementById("noteText");
   const text = (box ? box.value : data.draft || "").trim();
   if (!text) return false;
-  data.notes.push({ id: Date.now(), text, at: Date.now(), where: data.settings.includeWhere ? whereText() : "", sent: false });
+  const note = { id: Date.now(), text, at: Date.now(), where: data.settings.includeWhere ? whereText() : "", sent: false };
+  if (!attachToNote(note, data.settings.includeScreen !== false)) attNoRoom = true;
+  data.notes.push(note);
   data.draft = ""; save(); return true;
 }
 
@@ -488,7 +493,10 @@ async function sendNotes(viaShare) {
     document.querySelectorAll('[data-act="send-notes"],[data-act="share-notes"]').forEach(b => b.disabled = true);
     try {
       await window.syncFlush();
-      feedbackMsg = list.length === 1 ? "Sent. Thank you!" : `${list.length} notes sent. Thank you!`;
+      await Promise.race([uploadAtts(), new Promise(r => setTimeout(r, 20000))]);
+      const left = list.some(n => (n.atts || []).some(a => !a.up));
+      feedbackMsg = (list.length === 1 ? "Sent. Thank you!" : `${list.length} notes sent. Thank you!`) +
+        (left ? " The pictures will follow on their own when the connection is better." : "");
     } catch (e) {
       feedbackMsg = "Saved. It will reach the inbox on its own as soon as you're back online.";
     }
@@ -497,7 +505,8 @@ async function sendNotes(viaShare) {
   const text = composeMessage(list);
   if (navigator.share) {
     try {
-      await navigator.share({ title: "Row by Row notes", text });
+      const files = attFiles(list), withFiles = files.length && navigator.canShare && navigator.canShare({ files, text });
+      await navigator.share(withFiles ? { title: "Row by Row notes", text, files } : { title: "Row by Row notes", text });
       list.forEach(n => { n.sent = true; n.sentAt = Date.now(); }); save();
       feedbackMsg = list.length === 1 ? "Sent. Thank you!" : `${list.length} notes sent. Thank you!`;
       return render();
@@ -515,10 +524,11 @@ async function sendNotes(viaShare) {
 function renderFeedback() {
   const pending = pendingNotes(), sent = data.notes.filter(n => n.sent && !n.deleted);
   const where = whereText();
-  const back = lastPlace ? `#${lastPlace.view}/${lastPlace.id}${lastPlace.sub ? "/" + lastPlace.sub : ""}` : "#home";
+  const back = lastPlace ? "#" + [lastPlace.view, lastPlace.id, lastPlace.sub].filter(Boolean).join("/") : "#home";
   const noteItem = (n, canDelete) => `
     <div class="note">
       <p style="margin:0;white-space:pre-wrap">${esc(n.text)}</p>
+      ${noteAttsHtml(n)}
       <p class="small muted" style="margin:4px 0 0">${when(n.at)}${n.where ? " · " + esc(n.where) : ""}${n.sent ? ` · sent ${when(n.sentAt)}` : ""}</p>
       ${canDelete ? `<div class="note-actions"><button class="linkbtn" data-note-del="${n.id}">Delete</button>
         <button class="linkbtn danger-text" data-note-del-yes="${n.id}" hidden>Yes, delete this note</button></div>` : ""}
@@ -531,6 +541,7 @@ function renderFeedback() {
       <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
     ${feedbackMsg ? `<p class="tip" role="status" style="margin:0">${esc(feedbackMsg)}</p>` : ""}
+    ${attNoRoom ? `<p class="tip" role="alert" style="margin:0">Your note is saved, but its pictures didn't fit on this phone, so they were left off.</p>` : ""}
     <div class="card stack">
       <label for="noteText" class="field-label" style="margin:0">Write a note</label>
       <textarea id="noteText" rows="5" placeholder="What's on your mind? Something confusing, a wish, a problem..."
@@ -538,6 +549,7 @@ function renderFeedback() {
       <p class="small muted" style="margin:0">Tip: tap the microphone on your keyboard to talk instead of typing.</p>
       ${where ? `<label class="check"><input type="checkbox" id="includeWhere" ${data.settings.includeWhere ? "checked" : ""}>
         <span>Add where I am: <b>${esc(where)}</b></span></label>` : ""}
+      ${attachHtml()}
       <button class="btn primary" data-act="send-notes">${pending.length ? `Send, with ${pending.length} saved note${pending.length > 1 ? "s" : ""}` : "Send"}</button>
       <button class="btn quiet" data-act="save-note">Save for later</button>
       ${signedIn()
@@ -555,7 +567,8 @@ function renderFeedback() {
     ${sent.length ? `<details class="card"><summary><b>Sent notes (${sent.length})</b></summary>
       <div class="stack" style="margin-top:12px">${sent.slice().reverse().map(n => noteItem(n, true)).join("")}</div></details>` : ""}
   </div>`;
-  feedbackMsg = "";
+  feedbackMsg = ""; attNoRoom = false;
+  wireAttach();
   const box = document.getElementById("noteText");
   box.addEventListener("input", () => { data.draft = box.value; save(); });
   const inc = document.getElementById("includeWhere");
@@ -568,7 +581,7 @@ app.addEventListener("click", async e => {
   if (t.dataset.noteDel) { t.hidden = true; t.nextElementSibling.hidden = false; return; }
   if (t.dataset.noteDelYes) {   // keep a blank marker so other devices delete it too
     const n = data.notes.find(n => String(n.id) === t.dataset.noteDelYes);
-    if (n) { n.deleted = true; n.text = ""; n.where = ""; }
+    if (n) { (n.atts || []).forEach(a => attDrop(a.id)); n.deleted = true; n.text = ""; n.where = ""; delete n.atts; }
     save(); return render();
   }
   const act = t.dataset.act;
@@ -691,7 +704,7 @@ function renderNew() {
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar"><button class="iconbtn" id="dCancel" aria-label="Cancel">←</button>
-      <div class="title"><b>New pattern</b><span>${chart ? "From a chart" : "From pixel art"}</span></div></div>
+      <div class="title"><b>New pattern</b><span>${chart ? "From a chart" : "From pixel art"}</span></div>${NOTES_BTN}</div>
     <p class="tip" style="margin:0">${chart
       ? "This looks like a chart, so each square is read exactly."
       : `This is pixel art with uneven squares, so it can't be read exactly. It's sized to match its squares (${d.found.cols} × ${d.found.rows}).`}</p>

@@ -234,6 +234,44 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     ok(await page.evaluate(() => /Finished!/.test(document.body.innerText) && !!document.querySelector(".love")), "the finished screen has a note");
     await page.screenshot({ path: OUT + "love-finished.png", fullPage: true });
 
+    // Pictures with notes: from the editor, the picture (with its grid) and the pattern go along; she can add her own.
+    {
+      await page.goto(URL + "#home", { waitUntil: "load" });
+      const [chooser] = await Promise.all([page.waitForFileChooser(), page.click('[data-act="new-picture"]')]);
+      await chooser.accept([CHART]); await page.waitForSelector("#dSave"); await wait(300);
+      await page.click('.topbar [data-go="#feedback"]'); await page.waitForSelector("#noteText");
+      let txt = await page.evaluate(() => document.body.innerText);
+      ok(/Add the picture I loaded and the pattern it made/.test(txt) && /Making a new pattern, 49 × 60 from a chart/.test(txt),
+        "notes opened from the editor offer its picture and pattern, and know where she is");
+      const [ac] = await Promise.all([page.waitForFileChooser(), page.click("[data-attadd]")]);
+      await ac.accept([CHART]); await page.waitForSelector(".att img");
+      ok(await page.$$eval(".att-row .att", e => e.length) === 1, "a picture she adds shows as a thumbnail");
+      await page.screenshot({ path: OUT + "note-pictures.png", fullPage: true }); await wait(400);
+      await page.click("[data-attx='0']"); await wait(100);
+      ok(!(await page.$(".att-row")), "and can be taken off again");
+      const [ac2] = await Promise.all([page.waitForFileChooser(), page.click("[data-attadd]")]);
+      await ac2.accept([CHART]); await page.waitForSelector(".att img");
+      await page.type("#noteText", "Colors look off"); await page.click('[data-act="save-note"]'); await wait(200);
+      const saved = await page.evaluate(() => { const n = data.notes.find(n => n.text === "Colors look off");
+        return { kinds: (n.atts || []).map(a => a.kind).join(","), local: (n.atts || []).filter(a => (localStorage.getItem("rowbyrow.att." + a.id) || "").startsWith("data:image/jpeg")).length,
+          sizes: (n.atts || []).map(a => (localStorage.getItem("rowbyrow.att." + a.id) || "").length) }; });
+      ok(saved.kinds === "picture,pattern,added" && saved.local === 3 && saved.sizes.every(z => z < 400000),
+        `a saved note keeps its 3 pictures on the phone, each small (${saved.kinds}; ${saved.sizes.map(z => Math.round(z / 1024) + " KB").join(", ")})`);
+      ok(await page.$$eval(".note .att", e => e.length) === 3, "the saved note shows its pictures");
+      // Signed in (sync stood in for): Send puts the note in her data and each picture in its own cloud entry.
+      await page.evaluate(() => { window._ss = window.syncState; window.uploaded = []; window.syncState = () => ({ user: { email: "tester@example.com" }, status: "synced" });
+        window.syncFlush = () => new Promise(r => setTimeout(r, 100));
+        window.syncUpload = (id, o) => new Promise(r => setTimeout(() => { uploaded.push({ id, kind: o.kind, note: o.note, ok: o.data.startsWith("data:image/jpeg") }); r(); }, 50)); render(); });
+      await page.click('[data-act="send-notes"]');
+      await page.waitForFunction(() => /Sent\. Thank you/.test(document.body.innerText), { timeout: 8000 });
+      const up = await page.evaluate(() => { const n = data.notes.find(n => n.text === "Colors look off");
+        return { calls: uploaded.length, all: uploaded.every(u => u.ok && u.note === n.id), marked: n.atts.every(a => a.up), left: n.atts.filter(a => localStorage.getItem("rowbyrow.att." + a.id)).length }; });
+      ok(up.calls === 3 && up.all && up.marked && up.left === 0, `sending uploads each picture once and clears the phone's copies (${JSON.stringify(up)})`);
+      await page.click('.topbar [aria-label="Back"]'); await wait(300);
+      ok(await page.evaluate(() => location.hash === "#new" && !!document.getElementById("dSave")), "Back from notes returns to the pattern she was making");
+      await page.evaluate(() => { window.syncState = window._ss; delete window.syncFlush; delete window.syncUpload; draft = null; });
+    }
+
     // Written pattern: open an import link, add it, follow a piece through rounds and copies, update it, delete it.
     if (WRITTEN) {
       const proj = JSON.parse(require("fs").readFileSync(WRITTEN, "utf8"));
@@ -323,7 +361,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     await page.reload({ waitUntil: "load" }); await wait(500);
     const cached = await page.evaluate(async () => { const k = await caches.keys(); const c = await caches.open(k.find(x => x.startsWith("rbr-")));
       return { name: k.join(","), files: (await c.keys()).length, controlled: !!navigator.serviceWorker.controller }; });
-    ok(cached.controlled && cached.files >= 12, `service worker controls the page and cached ${cached.files} files (${cached.name})`);
+    ok(cached.controlled && cached.files >= 13, `service worker controls the page and cached ${cached.files} files (${cached.name})`);
     await page.setOfflineMode(true);
     await page.reload({ waitUntil: "load" }); await wait(300);
     ok(/Monster Duo/.test(await page.evaluate(() => document.body.innerText)), "the app opens offline from the cache");

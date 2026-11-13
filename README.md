@@ -11,6 +11,7 @@ A phone app for following pixel crochet patterns one row at a time. It's a plain
 - Sign in with Google to sync patterns, progress and notes between devices
 - Backup: save one file (to Drive or email through the share menu, or Downloads) and restore it later. Restoring only adds: it brings back missing or deleted patterns and moves her place forward, never back
 - Notes and ideas: signed in, Send delivers them to a feedback inbox (`tools/read_feedback.py` reads it with a read-only key); signed out, the phone's share menu
+- Pictures with notes: from the new-pattern screen, the picture she loaded (with the grid the app found, in pink) and the pattern it made; from a pattern, a picture of it; or any picture she adds (up to 3). Shrunk to about 600 px; each goes to its own cloud entry next to her synced data (no Firebase Storage needed), and the reader saves them
 
 ## Tests
 - `node tests/sync.test.js` (or `bun`): sync merge rules, including a behind phone never wiping progress
@@ -24,6 +25,7 @@ A phone app for following pixel crochet patterns one row at a time. It's a plain
 - `pattern.js` turns a color grid into rows or C2C diagonals, and `verifySteps` rebuilds the chart from them as a check
 - `builtin.js` holds the built-in pattern(s)
 - `picture.js` finds a chart's grid (or pixel art's block size), checks and corrects it, reads each square, and combines colors (OKLab)
+- `attach.js` is pictures with notes (making them, keeping them until sent, uploading them)
 - `backup.js` is backup and restore (the file format, its checks, and the merge that only adds)
 - `written.js` is written patterns: projects, pieces, the round follower, import links
 - `app.js` / `style.css` are the screens

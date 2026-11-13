@@ -6,6 +6,7 @@ When she's signed in and taps Send, each note is marked via "inbox" and travels 
 Uses a read-only service account key (role: Cloud Datastore Viewer) that lives OUTSIDE the repo:
   %USERPROFILE%\\.row-by-row\\feedback-reader.json   (or set RBR_FEEDBACK_KEY to another path)
 A local copy of every note seen is kept next to it (feedback-seen.json), so a note deleted in the app later isn't lost.
+Pictures sent with a note (users/{uid}/attachments/{id}) are saved next to it too, in feedback-pictures/, and listed under the note.
 
   python tools/read_feedback.py          new notes since the last run (and marks them seen)
   python tools/read_feedback.py --all    every note ever seen
@@ -13,7 +14,7 @@ A local copy of every note seen is kept next to it (feedback-seen.json), so a no
 
 Needs: pip install google-auth requests
 """
-import datetime, json, os, sys
+import base64, datetime, json, os, sys
 
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
@@ -21,7 +22,9 @@ from google.oauth2 import service_account
 PROJECT = "row-by-row"
 KEY = os.environ.get("RBR_FEEDBACK_KEY", os.path.join(os.path.expanduser("~"), ".row-by-row", "feedback-reader.json"))
 SEEN = os.path.join(os.path.dirname(KEY), "feedback-seen.json")
-QUERY = f"https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents:runQuery"
+DOCS = f"https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents"
+QUERY = DOCS + ":runQuery"
+PICS = os.path.join(os.path.dirname(KEY), "feedback-pictures")
 
 
 def decode(v):
@@ -38,7 +41,9 @@ def fetch():
     """Every note marked for the inbox, from every person's synced data, keyed '<uid>/<note id>'."""
     creds = service_account.Credentials.from_service_account_file(KEY, scopes=["https://www.googleapis.com/auth/datastore"])
     body = {"structuredQuery": {"from": [{"collectionId": "state", "allDescendants": True}]}}
-    r = AuthorizedSession(creds).post(QUERY, json=body, timeout=30)
+    global SESSION
+    SESSION = AuthorizedSession(creds)
+    r = SESSION.post(QUERY, json=body, timeout=30)
     r.raise_for_status()
     notes = {}
     for row in r.json():
@@ -50,6 +55,27 @@ def fetch():
             if isinstance(n, dict) and n.get("via") == "inbox" and not n.get("deleted") and n.get("text"):
                 notes[f"{uid}/{nid}"] = n
     return notes
+
+
+def pictures(key, n):
+    """Save the note's pictures (once) and return their local paths, or a word on any not arrived yet."""
+    uid, nid = key.split("/")
+    out = []
+    for a in n.get("atts") or []:
+        aid = str(a.get("id", ""))
+        if not aid.isalnum(): continue
+        path = os.path.join(PICS, f"{nid}-{a.get('kind', 'picture')}-{aid}.jpg")
+        if not os.path.exists(path):
+            r = SESSION.get(f"{DOCS}/users/{uid}/attachments/{aid}", timeout=30)
+            if r.status_code == 404:
+                out.append(f"({a.get('kind', 'picture')}: not arrived yet)"); continue
+            r.raise_for_status()
+            url = decode(r.json().get("fields", {}).get("data", {})) or ""
+            if not url.startswith("data:image/jpeg;base64,"): continue
+            os.makedirs(PICS, exist_ok=True)
+            open(path, "wb").write(base64.b64decode(url.split(",", 1)[1]))
+        out.append(path)
+    return out
 
 
 def device(ua):
@@ -75,6 +101,7 @@ def main():
         print(f"--- {when} · {n.get('from') or k.split('/')[0]} · {device(n.get('device'))}{'' if k in live else ' · (deleted in the app since)'}")
         if n.get("where"): print(f"    where: {n['where']}")
         print("    " + n["text"].replace("\n", "\n    "))
+        for p in (pictures(k, n) if k in live else []): print(f"    picture: {p}")
     if not show:
         print("No new notes." if everything else "The inbox is empty.")
     if "--peek" not in sys.argv:

@@ -156,6 +156,14 @@
     const to = setTimeout(() => { stopAll(); rej({ code: "timeout" }); }, ms);
   });
 
+  // A picture sent with a note: its own small entry next to her synced data (her own-data rules allow it).
+  window.syncUpload = (id, obj) => {
+    const u = auth && auth.currentUser;
+    if (!db || !u) return Promise.reject({ code: "signed-out" });
+    return Promise.race([db.doc(`users/${u.uid}/attachments/${id}`).set(obj),
+      new Promise((res, rej) => setTimeout(() => rej({ code: "timeout" }), 15000))]);
+  };
+
   window.syncSignIn = async () => {
     if (!auth) return;
     const provider = new firebase.auth.GoogleAuthProvider();
