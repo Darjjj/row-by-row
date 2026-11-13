@@ -13,7 +13,7 @@ A phone app for following pixel crochet patterns one row at a time. It's a plain
 - `node tests/sync.test.js` (or `bun`): sync merge rules, including a behind phone never wiping progress
 - `node tests/picture.test.js`: Monster Duo drawn as a picture must come back square for square
 - `node tests/chart.test.js`: the real Monster Duo chart image (export it first with `python tests/export-chart.py`), synthetic charts, pixel art, and a photo that must not be taken for a chart
-- `tests/phone-check.js <chart.jpg> <photo.jpg>`: headless Chrome at 375 px, light and dark; needs `puppeteer-core`, Chrome, and the local server running
+- `tests/phone-check.js <chart.jpg> <photo.jpg> [transparent.png]`: headless Chrome at 375 px, light and dark, plus failed saves, renames during redraws, offline via the service worker; make the third image with `python tests/make-transparent.py out.png`. Needs `puppeteer-core`, Chrome, and the local server running
 
 ## Files
 - `pattern.js` turns a color grid into rows or C2C diagonals, and `verifySteps` rebuilds the chart from them as a check

@@ -1,10 +1,10 @@
 // Phone-size check of Row by Row in headless Chrome, light and dark:
 // existing progress survives, a chart is read square for square, a photo becomes a pattern, crochet/rename/delete work.
 // Needs: puppeteer-core installed where node can find it, Chrome, and the app served on :5178
-// (python -m http.server 5178). Usage: node phone-check.js <chart.jpg> <photo.jpg>
+// (python -m http.server 5178). Usage: node phone-check.js <chart.jpg> <photo.jpg> [transparent-chart.png]
 const puppeteer = require("puppeteer-core");
 const OUT = __dirname + "/shots/", URL = "http://127.0.0.1:5178/";
-const CHART = process.argv[2] || "C:/Projects/monster-graphghan/tools/original-chart.jpg", PHOTO = process.argv[3];
+const CHART = process.argv[2] || "C:/Projects/monster-graphghan/tools/original-chart.jpg", PHOTO = process.argv[3], CLEAR = process.argv[4];
 require("fs").mkdirSync(OUT, { recursive: true });
 let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); if (!c) fails++; };
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -123,6 +123,61 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       `${scheme}: inbox note saved with via, from, device, and a sync stamp`);
     await page.screenshot({ path: OUT + `feedback-sent-${scheme}.png`, fullPage: true });
     ok(errors.length === 0, `${scheme}: no page errors ${errors.join(" | ")}`);
+    await page.close();
+  }
+
+  // ---- reliability: failed saves, renames during redraws, transparent pictures, offline through the service worker
+  {
+    const page = await browser.newPage(); const errors = [];
+    page.on("pageerror", e => errors.push(e.message));
+    await page.setViewport({ width: 375, height: 812, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await page.evaluateOnNewDocument(() => { window.SYNC_DISABLED = true; });
+    await page.goto(URL + "#home", { waitUntil: "load" });
+    await page.evaluate(() => localStorage.removeItem("rowbyrow.v1")); await page.reload({ waitUntil: "load" });
+    const breakStorage = on => page.evaluate(on => {
+      if (on) { window._set = Storage.prototype.setItem; Storage.prototype.setItem = () => { throw new DOMException("full", "QuotaExceededError"); }; }
+      else Storage.prototype.setItem = window._set;
+    }, on);
+    const warnShown = () => page.evaluate(() => { const w = document.getElementById("saveWarn"); return !!w && !w.hidden; });
+
+    await page.goto(URL + "#work/monster-duo", { waitUntil: "load" }); await page.waitForSelector(".chips");
+    await breakStorage(true); await page.click('[data-chip="0"]');
+    ok(await warnShown(), "a failed save shows the warning");
+    await breakStorage(false); await page.click('[data-chip="0"]');   // row 1 is one color: untap it
+    ok(!(await warnShown()), "the warning goes away once a save works");
+
+    if (CLEAR) {
+      await page.goto(URL + "#home", { waitUntil: "load" });
+      const [chooser] = await Promise.all([page.waitForFileChooser(), page.click('[data-act="new-picture"]')]);
+      await chooser.accept([CLEAR]); await page.waitForSelector("#dSave"); await wait(300);
+      const size = await page.evaluate(() => draft.mode + " " + document.getElementById("dSize").textContent);
+      ok(/^chart 51 × 60 squares/.test(size), `transparent pixel art (random colors hidden under the clear parts) reads as the chart (${size})`);
+      await page.type("#dName", "Clear chart");
+      await breakStorage(true); await page.click("#dSave"); await wait(200);
+      ok(await page.evaluate(() => location.hash === "#new" && !!draft) && await warnShown(), "a failed pattern save keeps the editor open");
+      await breakStorage(false); await page.click("#dSave");
+      await page.waitForFunction(() => location.hash.startsWith("#pattern/p"));
+      const n = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns).filter(p => p.name === "Clear chart").length);
+      ok(n === 1, `saving again after a failure makes one pattern, not two (${n})`);
+      // Rename without leaving the box, then redraw (as rotation or sync would): the new name must stick.
+      await page.click("#patName", { clickCount: 3 }); await page.type("#patName", "Kept name");
+      await page.evaluate(() => render());
+      const kept = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns).some(p => p.name === "Kept name"));
+      ok(kept, "a rename survives a redraw before the box loses focus");
+    }
+
+    // Service worker: a full set is cached, and the app opens offline.
+    await page.goto(URL + "#home", { waitUntil: "load" });
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload({ waitUntil: "load" }); await wait(500);
+    const cached = await page.evaluate(async () => { const k = await caches.keys(); const c = await caches.open(k.find(x => x.startsWith("rbr-")));
+      return { name: k.join(","), files: (await c.keys()).length, controlled: !!navigator.serviceWorker.controller }; });
+    ok(cached.controlled && cached.files >= 11, `service worker controls the page and cached ${cached.files} files (${cached.name})`);
+    await page.setOfflineMode(true);
+    await page.reload({ waitUntil: "load" }); await wait(300);
+    ok(/Monster Duo/.test(await page.evaluate(() => document.body.innerText)), "the app opens offline from the cache");
+    await page.setOfflineMode(false);
+    ok(errors.length === 0, `no page errors in the reliability checks ${errors.join(" | ")}`);
     await page.close();
   }
   await browser.close();

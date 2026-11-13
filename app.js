@@ -31,10 +31,26 @@ function stampChanges() {
     snap[id] = cur;
   }
 }
+// Write everything to the phone. Returns false (and shows a warning that stays until a save works) if it can't,
+// for example when the phone's storage is full.
+function persist() {
+  let ok = true;
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) { ok = false; }
+  let warn = document.getElementById("saveWarn");
+  if (!ok && !warn) {
+    warn = document.createElement("div"); warn.id = "saveWarn"; warn.setAttribute("role", "alert");
+    warn.textContent = "Row by Row couldn't save on this phone, so your latest changes could be lost if the app closes. " +
+      "Your phone may be out of storage space.";
+    document.body.prepend(warn);
+  }
+  if (warn) warn.hidden = ok;
+  return ok;
+}
 function save() {
   stampChanges();
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) {}
+  const ok = persist();
   if (window.syncPush) window.syncPush();
+  return ok;
 }
 
 const myPatterns = () => Object.values(data.patterns).filter(p => !p.deleted && p.grid);
@@ -278,7 +294,7 @@ function renderPattern(p) {
       const v = nameBox.value.trim();
       if (v && v !== p.name) { p.name = v; save(); document.querySelector(".topbar .title b").textContent = v; }
     };
-    nameBox.addEventListener("change", rename);
+    nameBox.addEventListener("input", rename);   // as she types, so a redraw (rotation, sync) can't drop it
     nameBox.addEventListener("keydown", e => { if (e.key === "Enter") nameBox.blur(); });
   }
   const wrap = document.getElementById("chartWrap");
@@ -393,7 +409,7 @@ function onSyncChange(remoteChanged) {
   if (v === "home" || ((v === "pattern" || v === "work") && remoteChanged)) render();
 }
 window.RBR = { getData: () => data, resnap, save, onSyncChange,
-  persist: () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) {} } };
+  persist };
 
 app.addEventListener("click", e => {
   const t = e.target.closest("[data-act]"); if (!t) return;
@@ -592,7 +608,9 @@ function loadPicture(file) {
       const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
       const c = document.createElement("canvas");
       c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);   // transparent parts count as white everywhere
+      ctx.drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url); res(c);
     };
     img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("not a picture")); };
@@ -880,9 +898,12 @@ function saveDraft() {
   const taken = new Set(allPatterns().map(x => x.name));
   let name = d.name.trim();
   if (!name) { name = "My pattern"; for (let n = 2; taken.has(name); n++) name = `My pattern ${n}`; }
-  const id = "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  // The same id on a retry, so a failed save tapped twice doesn't make two patterns.
+  const id = d.savedId || (d.savedId = "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+  if (data.patterns[id] && !d.name.trim()) name = data.patterns[id].name;   // a retry keeps the name it was given
   data.patterns[id] = { id, name, grid: p.grid, colors: p.colors.map(c => ({ ...c, name: c.name.trim() || colorName(c.hex) })), created: Date.now() };
-  draft = null; save(); go(`#pattern/${id}`);
+  if (!save()) return;   // keep the editor open; the warning at the top explains, and Save can be tapped again
+  draft = null; go(`#pattern/${id}`);
 }
 app.addEventListener("click", e => { if (e.target.id === "dSave" && draft) saveDraft(); });
 
