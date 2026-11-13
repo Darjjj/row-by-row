@@ -7,7 +7,9 @@ each square with the app's own reader (picture.js: each square's main color, sam
   python tools/art_to_pattern.py option-4.png --grid 50x60 --name "Monkey with a banana" --id c-monkey-banana --out monkey.json
       [--margin 2] [--colors 10] [--drop-shadow] [--fit]
   --drop-shadow: pale gray-blue ground shadows become background
-  --fit: keep the width and size the height to the design (less plain background to crochet)
+  --fit: keep the width and size the height to the design (less plain background to crochet); a design taller
+         than --max-rows (70) gets a narrower grid instead
+  Near-black shades always become one black yarn.
 """
 import argparse, json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
@@ -23,6 +25,7 @@ def main():
     ap.add_argument("--id", required=True); ap.add_argument("--out", required=True)
     ap.add_argument("--margin", type=int, default=2); ap.add_argument("--colors", type=int, default=10)
     ap.add_argument("--drop-shadow", action="store_true"); ap.add_argument("--fit", action="store_true")
+    ap.add_argument("--max-rows", type=int, default=70)
     a = ap.parse_args()
     assert a.id.startswith("c-"), "chart pattern ids start with c-"
     cols, rows = map(int, a.grid.lower().split("x"))
@@ -41,7 +44,11 @@ def main():
     ys = [y for y in range(H) if any(not bg(px[x, y]) for x in range(0, W, 2))]
     box = (min(xs), min(ys), max(xs) + 1, max(ys) + 1)
     sub = im.crop(box)
-    if a.fit: rows = max(8, round(sub.height / sub.width * (cols - 2 * a.margin)) + 2 * a.margin)
+    if a.fit:   # keep the width, unless a tall design would run past --max-rows: then narrow it
+        rows = max(8, round(sub.height / sub.width * (cols - 2 * a.margin)) + 2 * a.margin)
+        if rows > a.max_rows:
+            cols = max(16, round((a.max_rows - 2 * a.margin) * sub.width / sub.height) + 2 * a.margin)
+            rows = max(8, round(sub.height / sub.width * (cols - 2 * a.margin)) + 2 * a.margin)
     # fit inside (cols - 2*margin) x (rows - 2*margin) squares, centered, on white
     inner_c, inner_r = cols - 2 * a.margin, rows - 2 * a.margin
     cell = max(sub.width / inner_c, sub.height / inner_r)
@@ -53,6 +60,13 @@ def main():
                              capture_output=True, text=True)
         if res.returncode: sys.exit(res.stderr)
         read = json.loads(res.stdout)
+    # near-black shades (outline anti-aliasing) are all the same black yarn: fold them into the darkest one
+    rgb = lambda c: [int(c["hex"][i:i + 2], 16) for i in (1, 3, 5)]
+    darks = sorted((c for c in read["colors"] if max(rgb(c)) < 64), key=lambda c: sum(rgb(c)))
+    if len(darks) > 1:
+        keep, drop = darks[0]["code"], {c["code"] for c in darks[1:]}
+        read["grid"] = ["".join(keep if ch in drop else ch for ch in r) for r in read["grid"]]
+        read["colors"] = [c for c in read["colors"] if c["code"] not in drop]
     colors = sorted(read["colors"], key=lambda c: -sum(r.count(c["code"]) for r in read["grid"]))
     pattern = {"kind": "chart", "id": a.id, "name": a.name, "grid": read["grid"],
                "colors": [{"code": c["code"], "name": c["name"], "hex": c["hex"]} for c in colors]}

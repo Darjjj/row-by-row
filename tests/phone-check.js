@@ -286,6 +286,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       await page.click(`[data-go="#library/${first}"]`); await page.waitForSelector("#libAdd");
       await page.screenshot({ path: OUT + "library-item.png", fullPage: true }); await wait(400);
       await page.click("#libAdd"); await page.waitForFunction(id => location.hash === "#pattern/" + id, {}, first);
+      await page.waitForSelector(`[data-go="#work/${first}"]`, { timeout: 5000 }).catch(() => {});
       ok(await page.evaluate(id => !!data.patterns[id] && data.patterns[id].grid.length === LIBRARY[0].grid.length && !!document.querySelector('[data-go="#work/' + id + '"]'), first),
         "adding a design copies it into her patterns and opens it");
       await page.goto(URL + "#library/" + first, { waitUntil: "load" }); await page.waitForSelector(".tip");
