@@ -1,9 +1,14 @@
 // Turns a picture into a color grid. Pure functions on pixel data (no DOM), so they can be tested.
 
 // Average color of each square. px: RGBA bytes of the cropped picture drawn at W*S x H*S pixels.
-// Transparent pixels count as white.
-function cellColors(px, W, H, S) {
+// Transparent pixels count as white. median: use each square's middle color instead, which keeps
+// blocky pictures from turning their blurry edges into extra in-between shades.
+function cellColors(px, W, H, S, median) {
   const out = [], rowLen = W * S * 4;
+  if (median) {
+    const g = { x0: 0, x1: W * S, y0: 0, y1: H * S, cols: W, rows: H };
+    return chartCells(px, W * S, g);
+  }
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     let r = 0, g = 0, b = 0;
     for (let dy = 0; dy < S; dy++) {
@@ -97,18 +102,45 @@ function colorName(hex) {
   if (s < 0.12) return l < 0.3 ? "Charcoal" : l < 0.62 ? "Gray" : "Light gray";
   let base = h < 15 || h >= 340 ? "red" : h < 40 ? "orange" : h < 65 ? "yellow" : h < 90 ? "lime green"
     : h < 160 ? "green" : h < 195 ? "teal" : h < 255 ? "blue" : h < 290 ? "purple" : "pink";
-  if ((base === "orange" || base === "red" || base === "yellow") && l < 0.42 && s < 0.75) base = "brown";
+  if ((base === "orange" || base === "yellow") && l < 0.42 && s < 0.75) base = "brown";
   else if ((base === "orange" || base === "yellow") && l > 0.6 && s < 0.5) base = "tan";
   else if ((base === "yellow" || base === "lime green") && l < 0.42 && s < 0.6) return "Olive green";
-  const prefix = l < 0.3 ? "dark " : l > 0.78 && s < 0.6 ? "pale " : l > 0.62 ? "light " : "";
+  const prefix = l < 0.35 ? "dark " : l > 0.78 && s < 0.6 ? "pale " : l > 0.62 ? "light " : "";
   const name = prefix + base;
   return name[0].toUpperCase() + name.slice(1);
+}
+
+// For blocky pictures: start from the picture's own distinct colors, then keep merging the two closest
+// until k are left (the cheapest merge by Ward's rule). Unlike k-means, a small but clearly different color
+// (an eye, a badge) survives, while specks of a few squares get absorbed first.
+function mergeDown(rgbs, k) {
+  const g = groupColors(rgbs, 0.05);
+  let groups = g.palette.map((c, i) => c && { lab: toLab(c), n: 0, ids: [i] }).filter(Boolean);
+  const idx = {}; g.palette.forEach((c, i) => { if (c) idx[i] = groups.findIndex(x => x.ids[0] === i); });
+  g.labels.forEach(l => groups[idx[l]].n++);
+  groups = groups.filter(x => x.n);
+  while (groups.length > k) {
+    let a = 0, b = 1, best = Infinity;
+    for (let i = 0; i < groups.length; i++) for (let j = i + 1; j < groups.length; j++) {
+      // Ward: closeness weighted by size, so specks of a few squares are absorbed before real colors merge.
+      const A = groups[i], B = groups[j], d = labDist2(A.lab, B.lab) * A.n * B.n / (A.n + B.n);
+      if (d < best) { best = d; a = i; b = j; }
+    }
+    const A = groups[a], B = groups[b], n = A.n + B.n;
+    A.lab = A.lab.map((v, t) => (v * A.n + B.lab[t] * B.n) / n); A.n = n; A.ids.push(...B.ids);
+    groups.splice(b, 1);
+  }
+  const of = {}; groups.forEach((x, gi) => x.ids.forEach(i => of[i] = gi));
+  const labels = g.labels.map(l => of[l]);
+  const sums = groups.map(() => [0, 0, 0, 0]);
+  rgbs.forEach((c, j) => { const s = sums[labels[j]]; s[0] += c[0]; s[1] += c[1]; s[2] += c[2]; s[3]++; });
+  return { labels, palette: sums.map(s => s[3] ? [s[0] / s[3], s[1] / s[3], s[2] / s[3]] : null) };
 }
 
 // Everything together: square colors -> a pattern grid with lettered colors, most-used color first.
 // Returns { grid: [strings, top row first], colors: [{code, name, hex, count}] }.
 function makeGrid(rgbs, W, H, k, opts = {}) {
-  let { labels, palette } = quantize(rgbs, k);
+  let { labels, palette } = opts.blocky ? mergeDown(rgbs, k) : quantize(rgbs, k);
   if (opts.tidy) labels = tidy(labels, W, H);
   return letterGrid(labels, palette, W, H);
 }
@@ -210,7 +242,15 @@ function fitLines(c) {
 }
 
 // The chart's grid in picture pixels, or null if this doesn't look like a chart.
-function detectGrid(px, w, h) {
+function detectGrid(px, w, h) { return analyzePicture(px, w, h).grid; }
+
+// { grid: the chart's grid or null, pixel: the size of its blocks if it looks like (uneven) pixel art, else null }.
+function analyzePicture(px, w, h) {
+  const res = analyze(px, w, h);
+  return res && res.x0 !== undefined ? { grid: res, pixel: null } : { grid: null, pixel: res ? res.pixel : null };
+}
+
+function analyze(px, w, h) {
   // A small file with few colors is pixel art at one pixel per square.
   if (w <= 200 && h <= 200 && w >= 8 && h >= 8) {
     const seen = new Set();
@@ -267,7 +307,13 @@ function detectGrid(px, w, h) {
   const Xspan = X.span.slice(), Yspan = Y.span.slice();
   const drawn = trim(X, { ...Y, span: Yspan }, true) & trim(Y, { ...X, span: Xspan }, false);
   const fx = fitLines(X), fy = fitLines(Y);
-  if (!drawn) { fill(fx, w); fill(fy, h); }
+  if (!drawn) {
+    // Without drawn lines, the even squares have to cover most of the picture. If they don't, the blocks
+    // are uneven (AI-made "pixel art" often is): no exact reading, but their size is a good pattern size.
+    const pixel = (X.p + Y.p) / 2, even = X.p / Y.p > 0.85 && X.p / Y.p < 1.18 && pixel >= 4;
+    if (fx.count < 0.8 * w / fx.size || fy.count < 0.8 * h / fy.size) return { pixel: even ? pixel : null };
+    fill(fx, w); fill(fy, h);
+  }
   if (fx.count < 8 || fy.count < 8 || fx.count > 200 || fy.count > 200) return null;
   if (fx.size / fy.size < 0.7 || fx.size / fy.size > 1.43) return null;   // squares, roughly
   const contrast = Math.min(fx.contrast, fy.contrast);
@@ -324,5 +370,5 @@ function addBorder(grid, size, code) {
   return [...Array(size).fill(full), ...grid.map(r => edge + r + edge), ...Array(size).fill(full)];
 }
 
-if (typeof module !== "undefined") module.exports = { cellColors, toLab, labDist2, toHex, quantize, tidy, colorName, makeGrid, letterGrid,
-  edgeProfiles, lineComb, fitLines, detectGrid, chartCells, groupColors, readChart, addBorder };
+if (typeof module !== "undefined") module.exports = { cellColors, toLab, labDist2, toHex, quantize, mergeDown, tidy, colorName, makeGrid, letterGrid,
+  edgeProfiles, lineComb, fitLines, detectGrid, analyzePicture, chartCells, groupColors, readChart, addBorder };

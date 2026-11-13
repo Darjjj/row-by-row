@@ -606,12 +606,28 @@ async function startDraft(file) {
   try { pic = await loadPicture(file); }
   catch (e) { homeMsg = "That file couldn't be opened as a picture. Try a JPG or PNG."; go("#home"); return render(); }
   const px = pic.getContext("2d").getImageData(0, 0, pic.width, pic.height).data;
-  const found = detectGrid(px, pic.width, pic.height);
-  const W = 50, H = clamp(Math.round(W * pic.height / pic.width), 5, 150);
-  draft = { pic, px, found, g: found && { ...found }, mode: found ? "chart" : "photo",
-    name: "", W, H, k: 6, zoom: 1, cx: pic.width / 2, cy: pic.height / 2, tidy: true,
+  const { grid: found, pixel } = analyzePicture(px, pic.width, pic.height);
+  // Uneven pixel art: size the pattern to its blocks, keep single-square details, and start near its own color count.
+  let W = 50, H = clamp(Math.round(W * pic.height / pic.width), 5, 150), k = 6;
+  const blocky = !found && pixel && pic.width / pixel <= 150 && pic.height / pixel <= 150;
+  if (blocky) {
+    W = clamp(Math.round(pic.width / pixel), 5, 150); H = clamp(Math.round(pic.height / pixel), 5, 150);
+    k = clamp(estimateColors(pic, W, H), 2, 16);   // faithful first; she can slide down
+  }
+  draft = { pic, px, found, g: found && { ...found }, mode: found ? "chart" : "photo", blocky,
+    name: "", W, H, k, zoom: 1, cx: pic.width / 2, cy: pic.height / 2, tidy: !blocky,
     border: 0, borderCode: "A", names: [], view: "pattern", result: null };
   go("#new");
+}
+
+// Roughly how many yarn colors a picture really has at this size (shades closer than a small step count as one).
+function estimateColors(pic, W, H) {
+  const c = document.createElement("canvas"); c.width = W * SS; c.height = H * SS;
+  const ctx = c.getContext("2d", { willReadFrequently: true }); ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(pic, 0, 0, c.width, c.height);
+  const { labels, palette } = groupColors(cellColors(ctx.getImageData(0, 0, c.width, c.height).data, W, H, SS, true), 0.08);
+  const counts = palette.map(() => 0); labels.forEach(l => counts[l]++);
+  return counts.filter(n => n >= Math.max(2, W * H * 0.002)).length;   // ignore stray in-between shades
 }
 
 // The part of the picture that fills the pattern: the pattern's shape, as big as fits, divided by zoom.
@@ -636,7 +652,7 @@ function computeDraft(d) {
     const ctx = c.getContext("2d", { willReadFrequently: true });
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(d.pic, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
-    g = makeGrid(cellColors(ctx.getImageData(0, 0, c.width, c.height).data, d.W, d.H, SS), d.W, d.H, d.k, { tidy: d.tidy });
+    g = makeGrid(cellColors(ctx.getImageData(0, 0, c.width, c.height).data, d.W, d.H, SS, d.blocky), d.W, d.H, d.k, { tidy: d.tidy, blocky: d.blocky });
   }
   // Keep names she typed: each goes to the new color closest to the one she named, if it's still close.
   g.colors.forEach(col => {
@@ -679,6 +695,8 @@ function renderNew() {
   <div class="screen stack">
     <div class="topbar"><button class="iconbtn" id="dCancel" aria-label="Cancel">←</button>
       <div class="title"><b>New pattern</b><span>${chart ? "From a chart" : "From a picture"}</span></div></div>
+    ${d.blocky && !chart ? `<p class="tip" style="margin:0">This looks like pixel art with uneven squares, so it can't be read exactly.
+      The size is set to match its squares (${d.W} × ${d.H}). Check it against the Picture view.</p>` : ""}
     ${d.found ? `<div class="card stack">
       <p style="margin:0">${chart ? "This looks like a chart, so each square is read exactly." : "Reading it as a photo: the colors are simplified to fit the size you pick."}</p>
       <div class="seg" role="group" aria-label="Read the picture as">
@@ -715,7 +733,7 @@ function renderNew() {
       <div><label class="field-label" for="dZoom">Zoom</label>
         <input id="dZoom" type="range" min="1" max="4" step="0.01" value="${d.zoom}"></div>
       <div><label class="field-label" for="dK">Colors: <span id="dKv">${d.k}</span></label>
-        <input id="dK" type="range" min="2" max="12" step="1" value="${d.k}"></div>
+        <input id="dK" type="range" min="2" max="16" step="1" value="${d.k}"></div>
       <label class="check"><input type="checkbox" id="dTidy" ${d.tidy ? "checked" : ""}><span>Tidy up stray single squares</span></label>`}
       <div><div class="field-label">Border</div>
         <div class="seg" role="group" aria-label="Border width">${[0, 1, 2, 3].map(n =>

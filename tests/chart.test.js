@@ -4,7 +4,7 @@ const fs = require("fs"), vm = require("vm"), path = require("path");
 const repo = path.join(__dirname, ".."), S = __dirname, ctx = { module: undefined };
 vm.createContext(ctx);
 for (const f of ["builtin.js", "picture.js"]) vm.runInContext(fs.readFileSync(path.join(repo, f), "utf8"), ctx);
-const { detectGrid, readChart } = vm.runInContext("({ detectGrid, readChart })", ctx);
+const { detectGrid, readChart, analyzePicture } = vm.runInContext("({ detectGrid, readChart, analyzePicture })", ctx);
 const P = vm.runInContext("BUILTIN_PATTERNS[0]", ctx);
 let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); if (!c) fails++; };
 const sameUpToLetters = (a, b) => {
@@ -56,6 +56,19 @@ for (const [label, cell, opts] of [["lines, 13.7 px squares, margins", 13.7, { l
   const { px, w, h } = draw(P.grid, cell, opts), g = detectGrid(px, w, h);
   const out = g && readChart(px, w, g);
   ok(g && g.cols === 51 && g.rows === 60 && sameUpToLetters(out.grid, P.grid), `${label}: ${g ? g.cols + " x " + g.rows : "not found"}${out ? ", " + out.colors.length + " colors" : ""}`);
+}
+
+// Uneven pixel art (like AI-made images): blocks of 20-24 px, some half size. Not a chart, but sized to its blocks.
+{
+  const hex = {}; P.colors.forEach(c => hex[c.code] = [1, 3, 5].map(i => parseInt(c.hex.slice(i, i + 2), 16)));
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const edges = n => { const e = [0]; for (let i = 0; i < n; i++) e.push(e[e.length - 1] + (rnd() < 0.15 ? 11 : 20 + Math.floor(rnd() * 5))); return e; };
+  const ex = edges(51), ey = edges(60), w = ex[51], h = ey[60], px = new Uint8ClampedArray(w * h * 4);
+  for (let r = 0; r < 60; r++) for (let c = 0; c < 51; c++) for (let y = ey[r]; y < ey[r + 1]; y++) for (let x = ex[c]; x < ex[c + 1]; x++) {
+    const i = (y * w + x) * 4, col = hex[P.grid[r][c]]; px[i] = col[0]; px[i + 1] = col[1]; px[i + 2] = col[2]; px[i + 3] = 255;
+  }
+  const a = analyzePicture(px, w, h);
+  ok(!a.grid && a.pixel && Math.abs(w / a.pixel - 51) <= 6, `uneven pixel art: not a chart, sized ${a.pixel ? Math.round(w / a.pixel) + " x " + Math.round(h / a.pixel) : "-"} (drawn 51 x 60)`);
 }
 
 // Not a chart: smooth shapes and noise, like a photo.

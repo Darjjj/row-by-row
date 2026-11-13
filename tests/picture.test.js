@@ -3,6 +3,7 @@ const dir = path.join(__dirname, ".."), ctx = { module: undefined };
 vm.createContext(ctx);
 for (const f of ["builtin.js", "picture.js"]) vm.runInContext(fs.readFileSync(path.join(dir, f), "utf8"), ctx);
 const { cellColors, makeGrid, addBorder, colorName, tidy } = vm.runInContext("({ cellColors, makeGrid, addBorder, colorName, tidy })", ctx);
+const { quantize, mergeDown } = vm.runInContext("({ quantize, mergeDown })", ctx);
 const P = vm.runInContext("BUILTIN_PATTERNS[0]", ctx);
 let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); if (!c) fails++; };
 
@@ -49,4 +50,15 @@ ok(colorName("#fafafa") === "White", "white");
 ok(/green/i.test(colorName("#6cb616")), "lime: " + colorName("#6cb616"));
 ok(/purple/i.test(colorName("#76509e")), "purple: " + colorName("#76509e"));
 ok(/brown/i.test(colorName("#7a4a22")), "brown: " + colorName("#7a4a22"));
+// Blocky pictures: a small, clearly different color (12 blue squares) survives; k-means tends to lose it.
+{
+  const rg = [], add = (c, n) => { for (let i = 0; i < n; i++) rg.push(c.map(v => v + (i % 7) - 3)); };
+  add([110, 110, 110], 1300); add([110, 180, 60], 600); add([20, 20, 20], 400); add([230, 40, 40], 270);
+  add([140, 25, 25], 130); add([130, 70, 20], 150); add([250, 190, 40], 120); add([45, 30, 20], 80); add([40, 120, 220], 12);
+  const blueIn = r => r.palette.some(c => c && c[2] > 180 && c[0] < 90);
+  ok(blueIn(mergeDown(rg, 8)), "mergeDown keeps 12 blue squares at 8 colors");
+  const r6 = mergeDown(rg, 6);
+  ok(r6.palette.filter(Boolean).length === 6, "mergeDown gives exactly the colors asked for");
+}
+ok(colorName("#8b1a1a") === "Dark red", "dark red is not brown: " + colorName("#8b1a1a"));
 console.log(fails ? fails + " failed" : "all passed"); process.exit(fails ? 1 : 0);
