@@ -6,6 +6,7 @@ A phone app for following pixel crochet patterns one row at a time. It's a plain
 - Crochet mode: big color counts in stitching order, tap colors as you finish them, chart with the current row outlined, screen stays on
 - Progress is saved on the phone, separately for each style
 - New patterns from a ready-made chart (grid found automatically and read square by square) or from any picture (crop and zoom, size, number of colors, tidy stray squares), with border and yarn names
+- Fix squares and colors on her own patterns: paint or fill squares, combine two colors, change a shade, rename yarns, add a color (up to 10), undo
 - Sign in with Google to sync patterns, progress and notes between devices
 - Notes and ideas: signed in, Send delivers them to a feedback inbox (`tools/read_feedback.py` reads it with a read-only key); signed out, the phone's share menu
 

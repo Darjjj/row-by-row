@@ -165,6 +165,7 @@ function render() {
   if ((view === "pattern" || view === "work") && p) lastPlace = { view, id };
   if (view === "feedback") return renderFeedback();
   if (view === "new" && draft) return renderNew();
+  if (view === "edit" && p && !p.builtIn) return renderEdit(p);
   if (view === "pattern" && p) return renderPattern(p);
   if (view === "work" && p) return renderWork(p);
   renderHome();
@@ -278,6 +279,7 @@ function renderPattern(p) {
       </div>
     </div>
     ${p.builtIn ? "" : `<div class="card stack">
+      <button class="btn quiet" data-go="#edit/${p.id}">Fix squares and colors</button>
       <label class="field-label" for="patName" style="margin:0">Pattern name</label>
       <input id="patName" class="text-input" value="${esc(p.name)}" maxlength="60" enterkeyhint="done">
       <div class="note-actions" style="margin:0"><button class="linkbtn danger-text" data-act="delete-ask">Delete this pattern</button></div>
@@ -906,6 +908,139 @@ function saveDraft() {
   draft = null; go(`#pattern/${id}`);
 }
 app.addEventListener("click", e => { if (e.target.id === "dSave" && draft) saveDraft(); });
+
+// ---------- fix squares and colors (her own patterns) ----------
+// Works on a copy; Save replaces the pattern. The size never changes, so her place in it stays valid.
+let editing = null;
+const ZOOMS = [6, 8, 10, 14, 18, 24, 30];
+
+function renderEdit(p) {
+  if (!editing || editing.id !== p.id) {
+    const fit = Math.floor((Math.min(innerWidth, 640) - 34) / p.grid[0].length);
+    editing = { id: p.id, grid: p.grid.map(r => r.split("")), colors: p.colors.map(c => ({ ...c })), brush: p.colors[0].code,
+      tool: "paint", cell: fit >= 12 ? Math.min(fit, 30) : 14, undo: [], dirty: false, combining: null };
+  }
+  const e = editing, used = {};
+  e.grid.forEach(r => r.forEach(k => used[k] = (used[k] || 0) + 1));
+  app.innerHTML = `
+  <div class="screen stack">
+    <div class="topbar"><button class="iconbtn" id="eBack" aria-label="Back">←</button>
+      <div class="title"><b>Fix squares and colors</b><span>${esc(p.name)}</span></div>
+      <button class="iconbtn" id="eUndo" aria-label="Undo" ${e.undo.length ? "" : "disabled"} style="padding:0 12px">Undo</button></div>
+    <div id="eLeave" class="card stack" hidden>
+      <p style="margin:0">Leave without saving your changes?</p>
+      <button class="btn danger" id="eDiscard">Leave without saving</button>
+      <button class="btn quiet" id="eStay">Keep editing</button></div>
+    <div class="brushes" role="radiogroup" aria-label="Paint with">${e.colors.map(c => `
+      <button class="brush" role="radio" data-brush="${c.code}" aria-checked="${c.code === e.brush}" aria-label="Paint with ${esc(c.name)}"
+        style="background:${c.hex};color:${textOn(c.hex)}">${c.code}</button>`).join("")}</div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div class="seg" role="group" aria-label="Tool" style="flex:1">
+        <button data-tool="paint" aria-pressed="${e.tool === "paint"}">Paint</button>
+        <button data-tool="fill" aria-pressed="${e.tool === "fill"}">Fill</button></div>
+      <button class="iconbtn" data-zoom="-1" aria-label="Zoom out">−</button>
+      <button class="iconbtn" data-zoom="1" aria-label="Zoom in">+</button></div>
+    <div class="chart-wrap" id="chartWrap"><canvas id="chart" class="edit-canvas" aria-label="Pattern. Tap a square to change it."></canvas></div>
+    <p class="small muted" style="margin:-6px 0 0">${e.tool === "fill"
+      ? "Tap a square to recolor the whole area of that color around it."
+      : "Pick a color above, then tap squares to paint them."}</p>
+    <div class="card stack"><div><h2 style="margin:0 0 4px">Yarn colors</h2>
+      <p class="small muted" style="margin:0">Tap a swatch to change its shade. Combine turns every square of one color into another.</p></div>
+      <div class="key">${e.colors.map(c => e.combining === c.code ? `
+        <div class="stack" style="gap:8px"><b>Combine ${esc(c.name)} into:</b>
+          <div class="brushes">${e.colors.filter(o => o.code !== c.code).map(o => `
+            <button class="brush" data-into="${o.code}" aria-label="Into ${esc(o.name)}" style="background:${o.hex};color:${textOn(o.hex)}">${o.code}</button>`).join("")}</div>
+          <button class="linkbtn" data-combine-cancel>Cancel</button></div>` : `
+        <div class="key-row edit-row">
+          <input type="color" class="sw-pick" data-shade="${c.code}" value="${c.hex}" aria-label="Shade of ${esc(c.name)}">
+          <span class="code">${c.code}</span>
+          <input class="text-input slim" data-rename="${c.code}" value="${esc(c.name)}" maxlength="40" aria-label="Name for color ${c.code}">
+          <span class="num">${fmt(used[c.code] || 0)}</span>
+          ${e.colors.length > 1 ? `<button class="linkbtn" data-combine="${c.code}">Combine</button>` : "<span></span>"}</div>`).join("")}</div>
+      ${e.colors.length < MAX_COLORS
+        ? `<label class="linkbtn add-color">＋ Add a color<input type="color" id="eAdd" value="#888888" class="visually-hidden"></label>`
+        : `<p class="small muted" style="margin:0">That's ${MAX_COLORS} colors, the most for one project. Combine two to make room for another.</p>`}
+    </div>
+    <button class="btn primary" id="eSave">${e.dirty ? "Save changes" : "Done"}</button>
+  </div>`;
+
+  const $ = id => document.getElementById(id);
+  const W = e.grid[0].length, H = e.grid.length;
+  drawChart($("chart"), { grid: e.grid.map(r => r.join("")), colors: e.colors }, { cell: e.cell });
+  const remember = () => {
+    e.undo.push({ grid: e.grid.map(r => r.slice()), colors: e.colors.map(c => ({ ...c })) });
+    if (e.undo.length > 50) e.undo.shift();
+    e.dirty = true;
+  };
+  const again = () => {   // redraw, keeping the chart scrolled where she was
+    const w = $("chartWrap"), t = w.scrollTop, l = w.scrollLeft, y = scrollY;
+    renderEdit(p); $("chartWrap").scrollTop = t; $("chartWrap").scrollLeft = l; scrollTo(0, y);
+  };
+
+  $("chart").addEventListener("click", ev => {
+    const r = $("chart").getBoundingClientRect();
+    const x = Math.floor((ev.clientX - r.left) / e.cell), y = Math.floor((ev.clientY - r.top) / e.cell);
+    if (x < 0 || y < 0 || x >= W || y >= H || e.grid[y][x] === e.brush) return;
+    remember();
+    if (e.tool === "paint") e.grid[y][x] = e.brush;
+    else {                                   // fill the connected area of the tapped color
+      const from = e.grid[y][x], stack = [[y, x]];
+      while (stack.length) {
+        const [yy, xx] = stack.pop();
+        if (yy < 0 || xx < 0 || yy >= H || xx >= W || e.grid[yy][xx] !== from) continue;
+        e.grid[yy][xx] = e.brush; stack.push([yy + 1, xx], [yy - 1, xx], [yy, xx + 1], [yy, xx - 1]);
+      }
+    }
+    again();
+  });
+  app.querySelectorAll("[data-brush]").forEach(b => b.onclick = () => { e.brush = b.dataset.brush; again(); });
+  app.querySelectorAll("[data-tool]").forEach(b => b.onclick = () => { e.tool = b.dataset.tool; again(); });
+  app.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => {
+    const i = ZOOMS.findIndex(v => v >= e.cell);
+    e.cell = ZOOMS[clamp((i < 0 ? ZOOMS.length - 1 : i) + +b.dataset.zoom, 0, ZOOMS.length - 1)]; again();
+  });
+  $("eUndo").onclick = () => { const u = e.undo.pop(); if (!u) return; e.grid = u.grid; e.colors = u.colors; e.dirty = true; again(); };
+  app.querySelectorAll("[data-rename]").forEach(inp => inp.oninput = () => {
+    const c = e.colors.find(c => c.code === inp.dataset.rename);
+    if (c) { c.name = inp.value; e.dirty = true; $("eSave").textContent = "Save changes"; }
+  });
+  app.querySelectorAll("[data-shade]").forEach(inp => inp.onchange = () => {
+    const c = e.colors.find(c => c.code === inp.dataset.shade);
+    if (c && /^#[0-9a-f]{6}$/i.test(inp.value)) { remember(); c.hex = inp.value.toLowerCase(); again(); }
+  });
+  app.querySelectorAll("[data-combine]").forEach(b => b.onclick = () => { e.combining = b.dataset.combine; again(); });
+  app.querySelectorAll("[data-combine-cancel]").forEach(b => b.onclick = () => { e.combining = null; again(); });
+  app.querySelectorAll("[data-into]").forEach(b => b.onclick = () => {
+    const from = e.combining, into = b.dataset.into;
+    remember();
+    e.grid.forEach(r => r.forEach((k, i) => { if (k === from) r[i] = into; }));
+    e.colors = e.colors.filter(c => c.code !== from);
+    if (e.brush === from) e.brush = into;
+    e.combining = null; again();
+  });
+  if ($("eAdd")) $("eAdd").onchange = ev => {
+    if (!/^#[0-9a-f]{6}$/i.test(ev.target.value)) return;
+    const taken = new Set(e.colors.map(c => c.code)), code = [...CODES].find(k => !taken.has(k));
+    remember();
+    const names = new Set(e.colors.map(c => c.name)), base = colorName(ev.target.value);
+    let name = base; for (let n = 2; names.has(name); n++) name = base + " " + n;
+    e.colors.push({ code, name, hex: ev.target.value.toLowerCase() });
+    e.brush = code; again();
+  };
+  const leave = () => { editing = null; go(`#pattern/${p.id}`); };
+  $("eBack").onclick = () => { if (!e.dirty) return leave(); $("eLeave").hidden = false; scrollTo(0, 0); };
+  $("eStay").onclick = () => { $("eLeave").hidden = true; };
+  $("eDiscard").onclick = leave;
+  $("eSave").onclick = () => {
+    if (!e.dirty) return leave();
+    const grid = e.grid.map(r => r.join("")), present = new Set(grid.join(""));
+    const colors = e.colors.filter(c => present.has(c.code)).map(c => ({ code: c.code, name: c.name.trim() || colorName(c.hex), hex: c.hex }));
+    // A new object, so the crochet steps are rebuilt from the new squares.
+    data.patterns[p.id] = { ...data.patterns[p.id], grid, colors };
+    if (!save()) return;                     // the warning at the top explains; her edits are still here
+    leave();
+  };
+}
 
 // ---------- keep the screen on while crocheting ----------
 let wakeLock = null;

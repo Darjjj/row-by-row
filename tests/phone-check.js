@@ -61,6 +61,48 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       return { same, n: p.colors.length };
     });
     ok(read.same && read.n === 10, `${scheme}: chart saved square for square as Monster Duo (in the browser's own JPEG decode)`);
+    // ---- fix squares and colors on the saved chart pattern
+    {
+      const pid = await page.evaluate(() => location.hash.split("/")[1]);
+      await page.click('[data-go^="#edit/"]'); await page.waitForSelector("#eSave");
+      const tap = async (x, y) => {
+        const box = await (await page.$("#chart")).boundingBox(), cell = await page.evaluate(() => editing.cell);
+        await page.evaluate((x, y, cell) => { const w = document.getElementById("chartWrap"); w.scrollLeft = x * cell - 40; w.scrollTop = y * cell - 40; }, x, y, cell);
+        const b2 = await (await page.$("#chart")).boundingBox();
+        await page.mouse.click(b2.x + (x + 0.5) * cell, b2.y + (y + 0.5) * cell);
+      };
+      const ed = () => page.evaluate(() => ({ g: editing.grid.map(r => r.join("")), colors: editing.colors.map(c => c.code + ":" + c.name), undo: editing.undo.length, dirty: editing.dirty }));
+      const before = await ed();
+      const bg = before.g[0][0], other = before.colors.map(c => c[0]).find(k => k !== bg);
+      await page.click(`[data-brush="${other}"]`); await tap(0, 0);
+      let now = await ed();
+      ok(now.g[0][0] === other && now.g[0][1] === bg, `${scheme}: paint changes just the tapped square`);
+      await page.click("#eUndo"); now = await ed();
+      ok(now.g[0][0] === bg, `${scheme}: undo puts it back`);
+      await page.click('[data-tool="fill"]'); await tap(0, 0); now = await ed();
+      const filled = now.g.join("").split("").filter(k => k === other).length - before.g.join("").split("").filter(k => k === other).length;
+      ok(filled > 100, `${scheme}: fill recolors the whole connected background (${filled} squares)`);
+      await page.click("#eUndo");
+      const victim = before.colors[before.colors.length - 1][0], into = before.colors[0][0];
+      await page.click(`[data-combine="${victim}"]`); await page.click(`[data-into="${into}"]`); now = await ed();
+      ok(now.colors.length === before.colors.length - 1 && !now.g.join("").includes(victim), `${scheme}: combine removes a color and repaints its squares`);
+      await page.$eval(`[data-rename="${into}"]`, el => { el.value = "Red Heart Gray"; el.dispatchEvent(new Event("input", { bubbles: true })); });
+      await page.$eval("#eAdd", el => { el.value = "#3366cc"; el.dispatchEvent(new Event("change", { bubbles: true })); });
+      now = await ed();
+      ok(now.colors.length === before.colors.length && /Blue 2/.test(now.colors[now.colors.length - 1]), `${scheme}: add a color (${now.colors[now.colors.length - 1]}) and it becomes the brush`);
+      await page.click('[data-tool="paint"]'); await tap(5, 5);
+      await page.screenshot({ path: OUT + `edit-${scheme}.png`, fullPage: true }); await wait(400);
+      await page.click("#eBack"); await wait(100);
+      ok(await page.evaluate(() => !document.getElementById("eLeave").hidden), `${scheme}: leaving with changes asks first`);
+      await page.click("#eStay");
+      await page.click("#eSave"); await page.waitForFunction(() => location.hash.startsWith("#pattern/"));
+      const saved = await page.evaluate(pid => { const p = JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns[pid];
+        return { w: p.grid[0].length, h: p.grid.length, n: p.colors.length, names: p.colors.map(c => c.name), sq: p.grid[5][5], t: !!p.t,
+          ok: verifySteps(p.grid, rowSteps(p.grid, "right")) && verifySteps(p.grid, c2cSteps(p.grid)) }; }, pid);
+      ok(saved.w === 49 && saved.h === 60 && saved.n === 10 && saved.names.includes("Red Heart Gray") && saved.ok && saved.t,
+        `${scheme}: saved: same size, ${saved.n} colors, renamed yarn kept, steps check out, stamped for sync`);
+    }
+
 
     // ---- a photo: no chart banner, photo controls, then save
     if (PHOTO) {
@@ -160,6 +202,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       const n = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns).filter(p => p.name === "Clear chart").length);
       ok(n === 1, `saving again after a failure makes one pattern, not two (${n})`);
       // Rename without leaving the box, then redraw (as rotation or sync would): the new name must stick.
+      await page.waitForSelector("#patName");
       await page.click("#patName", { clickCount: 3 }); await page.type("#patName", "Kept name");
       await page.evaluate(() => render());
       const kept = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns).some(p => p.name === "Kept name"));

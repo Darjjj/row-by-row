@@ -123,3 +123,16 @@ input[type="range"] { width: 100%; accent-color: var(--accent); min-height: 32px
 .swatch-btn { width: 40px; height: 40px; border-radius: 10px; border: 1px solid rgba(0,0,0,.25); cursor: pointer; }
 .swatch-btn[aria-pressed="true"] { outline: 3px solid var(--accent); outline-offset: 2px; }
 @media (prefers-color-scheme: dark) { .swatch-btn { border-color: rgba(255,255,255,.4); } }
+
+/* fix squares and colors */
+.brushes { display: flex; flex-wrap: wrap; gap: 8px; }
+.brush { width: 44px; height: 44px; border-radius: 10px; border: 2px solid rgba(0,0,0,.25); font-weight: 800; cursor: pointer; }
+.brush[aria-checked="true"] { outline: 3px solid var(--accent); outline-offset: 2px; }
+.edit-canvas { cursor: crosshair; }
+.edit-row { grid-template-columns: 34px 22px minmax(0, 1fr) auto auto; }
+.sw-pick { width: 34px; height: 34px; padding: 0; border: 1px solid rgba(0,0,0,.25); border-radius: 8px; background: none; cursor: pointer; }
+.sw-pick::-webkit-color-swatch-wrapper { padding: 2px; }
+.sw-pick::-webkit-color-swatch { border: 0; border-radius: 6px; }
+.add-color { display: inline-flex; align-items: center; position: relative; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+@media (prefers-color-scheme: dark) { .brush, .sw-pick { border-color: rgba(255,255,255,.4); } }
