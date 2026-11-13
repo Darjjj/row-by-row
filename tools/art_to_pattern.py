@@ -9,11 +9,12 @@ each square with the app's own reader (picture.js: each square's main color, sam
   --drop-shadow: pale gray-blue ground shadows become background
   --fit: keep the width and size the height to the design (less plain background to crochet); a design taller
          than --max-rows (70) gets a narrower grid instead
-  Near-black shades always become one black yarn.
+  Near-black shades always become one black yarn, and a square at least --line (0.35) covered by near-black outline
+  is black, so outlines thinner than a square stay closed instead of breaking where they run along a square edge.
 """
 import argparse, json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 HERE = Path(__file__).resolve().parent
 BUN = shutil.which("bun") or str(Path.home() / ".bun" / "bin" / "bun.exe")
@@ -26,6 +27,7 @@ def main():
     ap.add_argument("--margin", type=int, default=2); ap.add_argument("--colors", type=int, default=10)
     ap.add_argument("--drop-shadow", action="store_true"); ap.add_argument("--fit", action="store_true")
     ap.add_argument("--max-rows", type=int, default=70)
+    ap.add_argument("--line", type=float, default=0.35)  # outline share that makes a square black (0 = off)
     a = ap.parse_args()
     assert a.id.startswith("c-"), "chart pattern ids start with c-"
     cols, rows = map(int, a.grid.lower().split("x"))
@@ -67,6 +69,14 @@ def main():
         keep, drop = darks[0]["code"], {c["code"] for c in darks[1:]}
         read["grid"] = ["".join(keep if ch in drop else ch for ch in r) for r in read["grid"]]
         read["colors"] = [c for c in read["colors"] if c["code"] not in drop]
+    # outlines a bit thinner than a square lose to the fill when they run along a square's edge, leaving gaps:
+    # a square at least --line covered by dark outline is black, so the outline stays closed
+    blacks = sorted((c for c in read["colors"] if max(rgb(c)) < 64), key=lambda c: sum(rgb(c)))
+    if blacks and a.line > 0:
+        k = blacks[0]["code"]
+        r_, g_, b_ = canvas.split()   # near-black only (every channel dark), so dark greens and purples stay
+        cover = ImageChops.lighter(ImageChops.lighter(r_, g_), b_).point(lambda v: 255 if v < 70 else 0).resize((cols, rows), Image.BOX).load()
+        read["grid"] = ["".join(k if cover[x, y] >= a.line * 255 else ch for x, ch in enumerate(r)) for y, r in enumerate(read["grid"])]
     colors = sorted(read["colors"], key=lambda c: -sum(r.count(c["code"]) for r in read["grid"]))
     pattern = {"kind": "chart", "id": a.id, "name": a.name, "grid": read["grid"],
                "colors": [{"code": c["code"], "name": c["name"], "hex": c["hex"]} for c in colors]}
