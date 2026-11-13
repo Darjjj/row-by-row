@@ -98,15 +98,14 @@ function projectTotals(p) {
 }
 const YARN_SVG = `<svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true"><circle cx="24" cy="24" r="17" fill="none" stroke="currentColor" stroke-width="3"/><path d="M10 18c9 2 19 9 23 19M13 32c4-8 12-16 22-17M20 8c-1 9 3 21 13 27" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`;
 
-function projectCard(p) {
-  const { made, total } = projectTotals(p);
-  return `<button class="card pattern-card" data-go="#project/${p.id}">
+function projectCard(p, extra = "") {   // a compact journal row on home, like the chart patterns
+  const { made, total } = projectTotals(p), all = total > 0 && made >= total;
+  return `<button class="card pattern-card mini ${extra}" data-go="#project/${p.id}">
     <span class="project-icon">${YARN_SVG}</span>
     <span><b>${esc(p.name)}</b>
-      <span class="muted small">Written pattern · ${p.pieces.length} pieces</span>
-      <span class="bar" style="display:block;margin:8px 0 4px"><i style="width:${total ? made / total * 100 : 0}%"></i></span>
-      <span class="small">${made >= total ? "All made" : `${made} of ${total} made`}</span>
-    </span></button>`;
+      <span class="bar" style="display:block"><i style="width:${total ? made / total * 100 : 0}%"></i></span>
+      <span class="small muted">${all ? "All made" : `${made} of ${total} pieces made`}</span>
+    </span>${all ? `<span class="badge">${CHECK_SVG}</span>` : "<span></span>"}</button>`;
 }
 
 // ---------- screens ----------
@@ -162,7 +161,7 @@ function renderPiece(p, pc) {
     app.innerHTML = `
     <div class="screen stack">
       <div class="topbar">${back}<div class="title"><b>${esc(pc.name)}</b><span>${esc(p.name)}</span></div></div>
-      <div class="card stack"><b style="font-size:1.6em">${pc.count > 1 ? `All ${pc.count} made!` : "Made!"}</b>
+      <div class="card stack taped"><b style="font:800 2em/1 var(--font-head)">${pc.count > 1 ? `All ${pc.count} made!` : "Made!"}</b>
         ${loveLine()}
         <button class="btn primary" data-go="#project/${p.id}">Back to ${esc(p.name)}</button>
         <button class="btn quiet" data-wact="prev">Go back one step</button>
@@ -179,7 +178,7 @@ function renderPiece(p, pc) {
       ${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button></div>
     ${st.i === 0 && st.made > 0 ? `<p class="tip" role="status" style="margin:0">Number ${st.made} is done. Starting number ${st.made + 1}.</p>` : ""}
     <div class="bar"><i style="width:${st.i / st.n * 100}%"></i></div>
-    <div class="card stack">
+    <div class="card stack taped tape-mint">
       ${s.label ? `<div class="row-title"><b>${esc(s.label)}</b>${s.sts ? `<span class="count-badge">${s.sts} stitches</span>` : ""}</div>` : ""}
       ${s.range ? `<p class="small muted" style="margin:-8px 0 0">Rounds ${s.range} are all the same.</p>` : ""}
       <p class="step-text">${esc(s.text)}</p>
@@ -217,7 +216,7 @@ async function renderImport(code) {
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar"><h1>Add a pattern</h1></div>
-    <div class="card stack">
+    <div class="card stack taped tape-lav">
       <span class="project-icon">${YARN_SVG}</span>
       <b style="font-size:1.3em">${esc(proj.name)}</b>
       <p class="small muted" style="margin:0">${proj.pieces.length} pieces, ${ready} with patterns so far:
@@ -243,7 +242,7 @@ function renderChartImport(c) {
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar"><h1>Add a pattern</h1></div>
-    <div class="card stack">
+    <div class="card stack taped tape-lav">
       <canvas id="impChart" aria-label="The pattern" style="align-self:center;justify-self:center;border-radius:8px"></canvas>
       <b style="font-size:1.3em">${esc(c.name)}</b>
       <p class="small muted" style="margin:0">${W} × ${H} squares, ${c.colors.length} colors:

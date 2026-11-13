@@ -202,17 +202,19 @@ function isFinished(p) {
   if (p.kind === "written") { const { made, total } = projectTotals(p); return total > 0 && made >= total; }
   return progressFor(p).step >= stepsFor(p).length;
 }
-function patternCardHtml(p) {
-  if (p.kind === "written") return projectCard(p);
+const CHECK_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+// A compact journal row: framed thumbnail, name, a thin bar and her place (a check badge once finished).
+function patternCardHtml(p, extra = "") {
+  if (p.kind === "written") return projectCard(p, extra);
   const steps = stepsFor(p), pr = progressFor(p), pf = prefsFor(p);
-  const done = Math.min(pr.step, steps.length);
-  return `<button class="card pattern-card" data-go="#pattern/${p.id}">
-    <canvas data-thumb="${p.id}" aria-hidden="true"></canvas>
+  const done = Math.min(pr.step, steps.length), finished = done >= steps.length;
+  return `<button class="card pattern-card mini ${extra}" data-go="#pattern/${p.id}">
+    <span class="thumb"><canvas data-thumb="${p.id}" aria-hidden="true"></canvas></span>
     <span><b>${esc(p.name)}</b>
-      <span class="muted small">${p.grid[0].length} × ${p.grid.length} · ${pf.mode === "c2c" ? "C2C" : "Single crochet rows"}</span>
-      <span class="bar" style="display:block;margin:8px 0 4px"><i style="width:${done / steps.length * 100}%"></i></span>
-      <span class="small">${done >= steps.length ? `<b style="display:inline;font:inherit;color:var(--done);font-weight:700">Finished!</b>` : `Row ${done + 1} of ${steps.length}`}</span>
-    </span></button>`;
+      ${finished ? `<span class="small" style="display:block;color:var(--done);font-weight:700;margin-top:2px">Finished!</span>`
+        : `<span class="bar" style="display:block"><i style="width:${done / steps.length * 100}%"></i></span>
+           <span class="small muted">Row ${done + 1} of ${steps.length}${pf.mode === "c2c" ? " · C2C" : ""}</span>`}
+    </span>${finished ? `<span class="badge">${CHECK_SVG}</span>` : "<span></span>"}</button>`;
 }
 // The pattern she's on, big, with a button straight back to her row.
 function keepCardHtml(p) {
@@ -231,11 +233,11 @@ function keepCardHtml(p) {
   return `<div class="card keep taped">
     ${started ? `<span class="sticker" aria-hidden="true">row ${pr.step + 1}!</span>` : ""}
     <button class="pattern-card" data-go="#pattern/${p.id}">
-      <canvas data-thumb="${p.id}" aria-hidden="true"></canvas>
+      <span class="thumb"><canvas data-thumb="${p.id}" aria-hidden="true"></canvas></span>
       <span><span class="tag">${started ? "Keep going" : "Up next"}</span><b>${esc(p.name)}</b>
         <span class="muted small">Row ${pr.step + 1} of ${steps.length} · ${Math.round(pr.step / steps.length * 100)}% done</span>
         <span class="bar" style="display:block;margin:8px 0 0"><i style="width:${pr.step / steps.length * 100}%"></i></span></span></button>
-    <button class="btn primary" data-go="#work/${p.id}">${started ? "Keep crocheting" : "Start Row 1"}</button>
+    <button class="btn primary" data-go="#work/${p.id}">${started ? "Pick up where I left off" : "Start Row 1"}</button>
   </div>`;
 }
 const backupDue = () => !data.settings.lastBackup || Date.now() - data.settings.lastBackup > 30 * 864e5;
@@ -247,28 +249,26 @@ function renderHome() {
   <div class="screen stack">
     <div class="topbar" style="align-items:flex-start">
       <div class="hello"><span class="hand">Hi Momma ♥</span><h1 id="appTitle">My crochet journal</h1>
-        <span class="small muted">${all.length} pattern${all.length === 1 ? "" : "s"}</span></div>
+        <span class="small muted">${all.length} pattern${all.length === 1 ? "" : "s"}${keep && !isFinished(keep) && lastUsed(keep) > (keep.created || 0) ? " · 1 going right now" : ""}</span></div>
       <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
     ${homeMsg ? `<p class="tip" role="status" style="margin:0">${esc(homeMsg)}</p>` : ""}
     ${keep ? keepCardHtml(keep) : ""}
-    ${rest.length ? `<h2 class="sec">${keep ? "My other patterns" : "My patterns"}</h2>${rest.map(patternCardHtml).join("")}` : ""}
+    ${rest.length ? `<h2 class="sec">${keep ? "My other patterns" : "My patterns"}</h2>${rest.map((p, i) => patternCardHtml(p, i === 0 ? "taped tape-sky tape-right" : "")).join("")}` : ""}
     ${all.length ? "" : `<div class="card empty"><span class="hand">Nothing here yet</span>
       <p class="muted" style="margin:0">Pick a ready-made pattern, or make one from a picture of a chart or pixel art.</p></div>`}
-    <h2 class="sec">Add a pattern</h2>
-    <div class="tiles">
-      <button class="card tile" data-act="new-picture"><span class="dot" style="background:var(--accent-soft);color:var(--accent)">${TAB_ICONS.pic}</span>
-        New from a picture<span class="small">A chart or pixel art</span></button>
-      <button class="card tile" data-go="#library"><span class="dot" style="background:var(--warm-soft);color:var(--warm)">${TAB_ICONS.spark.replace("<svg", '<svg width="24" height="24"')}</span>
-        Ready-made<span class="small">${typeof LIBRARY !== "undefined" ? LIBRARY.length : 0} designs to pick from</span></button>
+    <div class="tiles" style="margin-top:2px">
+      <button class="card tile" data-act="new-picture"><span class="dot" style="background:var(--accent-soft);color:var(--accent)">${TAB_ICONS.pic}</span>New from a picture</button>
+      <button class="card tile" data-go="#library"><span class="dot" style="background:var(--warm-soft);color:var(--warm)">${TAB_ICONS.spark.replace("<svg", '<svg width="24" height="24"')}</span>Ready-made</button>
+      <button class="card tile" data-go="#feedback"><span class="dot" style="background:var(--done-soft);color:var(--done)">${TAB_ICONS.note.replace("<svg", '<svg width="24" height="24"')}</span>Notes</button>
     </div>
     <input type="file" id="picFile" accept="image/*" hidden>
     ${backupDue() ? backupCardHtml() : ""}
     ${Math.random() < 0.1 ? loveLine() : ""}
   </div>${tabsHtml("#home")}`;
   app.querySelectorAll("[data-thumb]").forEach(cv => {
-    const p = findPattern(cv.dataset.thumb), size = cv.closest(".keep") ? 96 : 88;
-    drawChart(cv, p, { cell: size / Math.max(p.grid[0].length, p.grid.length * 0.8) });
+    const p = findPattern(cv.dataset.thumb), size = cv.closest(".keep") ? 72 : 46;   // fits inside its framed thumb
+    drawChart(cv, p, { cell: size / Math.max(p.grid[0].length, p.grid.length) });
   });
   document.getElementById("picFile").addEventListener("change", e => { if (e.target.files[0]) startDraft(e.target.files[0]); });
   homeMsg = "";
@@ -426,7 +426,7 @@ function renderWork(p) {
   <div class="screen stack">
     <div class="topbar">
       <button class="iconbtn" data-go="#pattern/${p.id}" aria-label="Back to pattern">←</button>
-      <div class="title"><b>Row ${s.n} of ${steps.length}</b><span>${esc(p.name)} · ${c2c ? "C2C" : "Rows"}</span></div>
+      <div class="title"><b>${esc(p.name)}</b><span>Row ${s.n} of ${steps.length} · ${c2c ? "C2C" : "Rows (sc)"}</span></div>
       ${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
     <div class="bar"><i style="width:${pr.step / steps.length * 100}%"></i></div>
@@ -442,10 +442,10 @@ function renderWork(p) {
       }).join("")}</div>
       <p class="small muted" style="margin:0">${doneCount} of ${s.count} done. Tap each color when you finish it.</p>
     </div>
-    <div class="card stack">
+    <div class="card stack" style="gap:10px">
       <div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0;flex:1">Where you are</h2>
-        <button class="iconbtn" data-act="zoom" style="padding:0 14px">${zoomed ? "Fit" : "Zoom"}</button></div>
-      <div class="chart-wrap" id="chartWrap"><canvas id="chart" aria-label="Chart with this row highlighted"></canvas></div>
+        <button class="pill" data-act="zoom">${zoomed ? "Zoom out" : "Zoom in"}</button></div>
+      <div class="chart-wrap window" id="chartWrap"><canvas id="chart" aria-label="Chart with this row highlighted"></canvas></div>
       <p class="small muted" style="margin:0">This row is outlined in yellow. The pink dot is where it starts.</p>
     </div>
     <div class="card"><div class="key">${[...new Set(s.runs.map(r => r.k))].map(k => `
@@ -458,7 +458,7 @@ function renderWork(p) {
   const wrap = document.getElementById("chartWrap");
   const cell = zoomed ? 16 : (wrap.clientWidth - 2) / W;
   drawChart(document.getElementById("chart"), p, { cell, steps, step: pr.step, inrow });
-  if (zoomed) {   // scroll the current row into the middle of the zoomed chart
+  {   // a window on her row: scroll it into the middle (zoomed or not)
     const ys = s.cells.map(c => c[0]), xs = s.cells.map(c => c[1]);
     const cy = (Math.min(...ys) + Math.max(...ys) + 1) / 2 * cell, cx = (Math.min(...xs) + Math.max(...xs) + 1) / 2 * cell;
     wrap.scrollTop = cy - wrap.clientHeight / 2; wrap.scrollLeft = cx - wrap.clientWidth / 2;

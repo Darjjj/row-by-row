@@ -19,24 +19,25 @@ function libraryCardHtml() {
 function renderLibrary() {
   const groups = [];
   for (const it of LIBRARY) { let g = groups.find(g => g.name === it.group); if (!g) groups.push(g = { name: it.group, items: [] }); g.items.push(it); }
+  const tapes = ["", "tape-sky", "tape-mint", "tape-lav"];
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar">
-      <div class="title"><b>Ready-made patterns</b><span>Tap one to see it bigger</span></div>
+      <div class="title"><b style="font-size:1.3em">Ready-made patterns</b><span>${LIBRARY.length} designs · tap one to see it bigger</span></div>
       <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
-    ${groups.map(g => `<h2 class="sec">${esc(g.name)}</h2>
-      <div class="lib-grid">${g.items.map(it => `
-        <button class="card lib-card" data-go="#library/${it.id}">
-          <canvas data-lib="${it.id}" aria-hidden="true"></canvas>
+    ${groups.map((g, gi) => `<h2 class="sec" id="lib-g${gi}">${esc(g.name)}</h2>
+      <div class="lib-grid">${g.items.map((it, i) => `
+        <button class="card lib-card${i === 0 ? ` taped ${tapes[gi % 4]}` : ""}" data-go="#library/${it.id}">
+          <span class="lib-thumb"><canvas data-lib="${it.id}" aria-hidden="true"></canvas></span>
           <b>${esc(it.name)}</b>
           <span class="small muted">${it.grid[0].length} × ${it.grid.length} · ${it.colors.length} colors${libHave(it) ? ` · <span style="color:var(--done);font-weight:700">✓ Added</span>` : ""}</span>
         </button>`).join("")}</div>`).join("")}
   </div>${tabsHtml("#library")}`;
+  const cardW = (Math.min(innerWidth, 640) - 32 - 10) / 2 - 20;   // inside a card's framed thumbnail (116 px tall)
   app.querySelectorAll("[data-lib]").forEach(cv => {
     const it = libFind(cv.dataset.lib), W = it.grid[0].length, H = it.grid.length;
-    const box = Math.max(60, (Math.min(innerWidth, 640) - 80) / 2 - 24);
-    drawChart(cv, it, { cell: Math.max(1, box / Math.max(W, H)) });
+    drawChart(cv, it, { cell: Math.max(1, Math.min((cardW - 28) / W, 92 / H)) });
   });
 }
 

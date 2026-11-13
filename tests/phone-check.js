@@ -140,7 +140,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const id = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns).find(p => p.name.startsWith("Chart")).id);
     await page.goto(URL + "#work/" + id, { waitUntil: "load" }); await page.waitForSelector(".chips");
     await page.click('[data-chip="0"]'); await page.click('[data-act="next"]');
-    ok(await page.evaluate(() => document.querySelector(".topbar .title b").textContent) === "Row 2 of 60", `${scheme}: crochet mode works on the chart pattern`);
+    ok(await page.evaluate(() => /^Row 2 of 60/.test(document.querySelector(".topbar .title span").textContent)), `${scheme}: crochet mode works on the chart pattern`);
     await page.screenshot({ path: OUT + `work-${scheme}.png` });
     await page.goto(URL + "#home", { waitUntil: "load" });
     const order = await page.evaluate(() => [...document.querySelectorAll(".pattern-card b")].map(b => b.textContent));
