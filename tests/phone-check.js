@@ -217,6 +217,21 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       ok(kept, "a rename survives a redraw before the box loses focus");
     }
 
+    // Little hidden notes: three quick taps on the title, the finished screen, and every language renders.
+    await page.goto(URL + "#home", { waitUntil: "load" }); await page.waitForSelector("#appTitle");
+    for (let i = 0; i < 3; i++) await page.click("#appTitle");
+    await wait(300);
+    const toast = await page.evaluate(() => (document.querySelector(".love-toast") || {}).textContent || "");
+    ok(/♥/.test(toast) && /Momma|English/.test(toast), `three taps on the title show a note (${toast.replace(/\s+/g, " ").trim().slice(0, 60)})`);
+    await page.screenshot({ path: OUT + "love-toast.png" });
+    const all = await page.evaluate(() => LOVE.map(() => loveLine()).every(h => /♥/.test(h)) && LOVE.length);
+    ok(all >= 20, `${all} languages render`);
+    await page.evaluate(() => { const d = JSON.parse(localStorage.getItem("rowbyrow.v1")); d.progress["monster-duo|rows|right"] = { step: 60, inrow: 0, t: Date.now() };
+      localStorage.setItem("rowbyrow.v1", JSON.stringify(d)); });
+    await page.goto(URL + "#work/monster-duo", { waitUntil: "load" }); await page.reload({ waitUntil: "load" });
+    ok(await page.evaluate(() => /Finished!/.test(document.body.innerText) && !!document.querySelector(".love")), "the finished screen has a note");
+    await page.screenshot({ path: OUT + "love-finished.png", fullPage: true });
+
     // Service worker: a full set is cached, and the app opens offline.
     await page.goto(URL + "#home", { waitUntil: "load" });
     await page.evaluate(() => navigator.serviceWorker.ready);

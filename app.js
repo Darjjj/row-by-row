@@ -174,7 +174,7 @@ function render() {
 function renderHome() {
   app.innerHTML = `
   <div class="screen stack">
-    <div class="topbar"><h1>Row by Row</h1>${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button></div>
+    <div class="topbar"><h1 id="appTitle">Row by Row</h1>${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button></div>
     <p class="muted">Pick a pattern to keep crocheting.</p>
     ${homeMsg ? `<p class="tip" role="status" style="margin:0">${esc(homeMsg)}</p>` : ""}
     ${allPatterns().sort((a, b) => lastUsed(b) - lastUsed(a)).map(p => {
@@ -195,6 +195,7 @@ function renderHome() {
       <span class="note-icon" aria-hidden="true">${BUBBLE_SVG}</span>
       <span><b>Ideas or problems?</b><span class="muted small">Write a note any time and send it when you're ready.${pendingNotes().length ? ` <b style="display:inline;font-size:1em;color:var(--accent)">${pendingNotes().length} waiting to send.</b>` : ""}</span></span>
     </button>
+    ${Math.random() < 0.1 ? loveLine() : ""}
   </div>`;
   app.querySelectorAll("[data-thumb]").forEach(cv => {
     const p = findPattern(cv.dataset.thumb);
@@ -315,6 +316,7 @@ function renderWork(p) {
         <div class="title"><b>All ${steps.length} rows done</b><span>${esc(p.name)}</span></div></div>
       <div class="card stack"><b style="font-size:1.6em">Finished!</b>
         <p style="margin:0">Weave in your ends, add a border if you like, and block it flat.</p>
+        ${loveLine()}
         <div class="chart-wrap" id="chartWrap"><canvas id="chart"></canvas></div>
         <button class="btn quiet" data-act="prev">Go back to Row ${steps.length}</button>
         <button class="btn primary" data-go="#pattern/${p.id}">Done</button></div>
@@ -579,7 +581,7 @@ app.addEventListener("click", e => {
   const act = t.dataset.act, pr = p && progressFor(p);
   if (act === "scale") return cycleScale();
   if (act === "zoom") { zoomed = !zoomed; return render(); }
-  if (act === "next") { moveTo(pr, pr.step + 1, 0); save(); render(); return scrollTo(0, 0); }
+  if (act === "next") { moveTo(pr, pr.step + 1, 0); save(); render(); if (Math.random() < 1 / 30) loveToast(); return scrollTo(0, 0); }
   if (act === "prev") { moveTo(pr, Math.max(0, pr.step - 1), 0); save(); render(); return scrollTo(0, 0); }
   if (act === "reset-ask") { document.getElementById("resetConfirm").hidden = false; t.hidden = true; return; }
   if (act === "reset-cancel") return render();
@@ -940,6 +942,47 @@ function renderEdit(p) {
     leave();
   };
 }
+
+// ---------- little hidden notes for her ----------
+// Now and then: after a row (about 1 in 30), at the bottom of home (1 in 10), on a finished pattern (always),
+// and when the title is tapped three times quickly. A different language each time.
+const LOVE = [
+  ["English", "I love you, Momma"], ["Spanish", "Te quiero, mamá"], ["French", "Je t'aime, maman"],
+  ["Italian", "Ti voglio bene, mamma"], ["German", "Ich hab dich lieb, Mama"], ["Portuguese", "Eu te amo, mãe"],
+  ["Dutch", "Ik hou van je, mama"], ["Swedish", "Jag älskar dig, mamma"], ["Norwegian", "Jeg elsker deg, mamma"],
+  ["Danish", "Jeg elsker dig, mor"], ["Finnish", "Rakastan sinua, äiti"], ["Polish", "Kocham cię, mamo"],
+  ["Irish", "Is breá liom thú, a Mham"], ["Welsh", "Rwy'n dy garu di, Mam"], ["Hawaiian", "Aloha au iā ʻoe, Māmā"],
+  ["Tagalog", "Mahal kita, Nanay"], ["Swahili", "Nakupenda, Mama"], ["Turkish", "Seni seviyorum, anne"],
+  ["Vietnamese", "Con yêu mẹ"], ["Greek", "Σ' αγαπώ, μαμά", "S' agapó, mamá"], ["Russian", "Мама, я тебя люблю", "Mama, ya tebya lyublyu"],
+  ["Japanese", "お母さん、大好きだよ", "Okāsan, daisuki da yo"], ["Korean", "엄마, 사랑해요", "Eomma, saranghaeyo"],
+  ["Chinese", "妈妈，我爱你", "Māma, wǒ ài nǐ"], ["Arabic", "أحبك يا أمي", "Uḥibbuki yā ummī"]
+];
+let lastLove = -1;
+function pickLove() {
+  let i; do { i = Math.floor(Math.random() * LOVE.length); } while (i === lastLove && LOVE.length > 1);
+  lastLove = i;
+  const [lang, text, say] = LOVE[i];
+  return { text, sub: lang === "English" ? "English" : `${lang} · ${say ? say + " · " : ""}I love you, Momma` };
+}
+function loveLine() {
+  const l = pickLove();
+  return `<p class="love"><span aria-hidden="true">♥</span> <b dir="auto">${esc(l.text)}</b><br><span class="small">${esc(l.sub)}</span></p>`;
+}
+function loveToast() {
+  document.querySelectorAll(".love-toast").forEach(t => t.remove());
+  const l = pickLove(), t = document.createElement("div");
+  t.className = "love-toast"; t.setAttribute("role", "status");
+  t.innerHTML = `<span aria-hidden="true">♥</span> <b dir="auto">${esc(l.text)}</b><span class="small">${esc(l.sub)}</span>`;
+  document.body.appendChild(t);
+  setTimeout(() => t.classList.add("gone"), 4500);
+  setTimeout(() => t.remove(), 5500);
+}
+let titleTaps = [];
+document.addEventListener("click", e => {
+  if (e.target.id !== "appTitle") return;
+  const now = Date.now(); titleTaps = titleTaps.filter(t => now - t < 1200).concat(now);
+  if (titleTaps.length >= 3) { titleTaps = []; loveToast(); }
+});
 
 // ---------- keep the screen on while crocheting ----------
 let wakeLock = null;
