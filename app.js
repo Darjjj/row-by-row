@@ -118,10 +118,10 @@ function drawChart(canvas, p, opts = {}) {
   const steps = opts.steps, cur = opts.step ?? -1;
   let owner = null;
   if (steps) { owner = p.grid.map(r => Array(W).fill(0)); steps.forEach((s, i) => s.cells.forEach(([y, x]) => owner[y][x] = i)); }
-  const fadeTo = dark() ? "#1b212d" : "#ffffff";
+  const fadeTo = "#ffffff";   // charts sit on white "chart paper" in both themes
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const hex = cm[p.grid[y][x]].hex;
-    ctx.fillStyle = opts.fade !== false && owner && owner[y][x] > cur ? mix(hex, fadeTo, dark() ? 0.55 : 0.68) : hex;
+    ctx.fillStyle = opts.fade !== false && owner && owner[y][x] > cur ? mix(hex, fadeTo, 0.68) : hex;
     ctx.fillRect(x * cell, y * cell, cell, cell);
   }
   if (cell >= 5) {
@@ -166,6 +166,7 @@ function render() {
   if (view === "new" && draft) lastPlace = { view };
   if (view === "feedback") return renderFeedback();
   if (view === "backup") return renderBackup();
+  if (view === "more") return renderMore();
   if (view === "library" && typeof LIBRARY !== "undefined") { const it = id && libFind(id); return it ? renderLibraryItem(it) : renderLibrary(); }
   if (view === "import" && id) return renderImport(id);
   const proj = (view === "project" || view === "piece") && findProject(id);
@@ -181,41 +182,116 @@ function render() {
   renderHome();
 }
 
+// ---------- the notebook tabs along the bottom of the main screens ----------
+const TAB_ICONS = {
+  yarn: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 8.5c4 1 9 4.5 11 10M4.2 13c4-.2 7.5 2 9 6.5M9 3.9c3 3 5.8 8.6 5.6 15.6M18.6 6.8c-3.6.2-8 2.4-10.4 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+  spark: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.1 5.4 5.4 2.1-5.4 2.1L12 18.5l-2.1-5.4L4.5 11l5.4-2.1z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M19 16.5v4M17 18.5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`,
+  note: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5.5h15v10.5h-9l-4.5 3.5V16h-1.5z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.5 9.5h7M8.5 12.5h4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`,
+  more: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="5" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8"/><circle cx="8" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="16" cy="12" r="1.4" fill="currentColor"/></svg>`,
+  pic: `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="4" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="9.5" r="1.8" fill="currentColor"/><path d="M4.5 17l5-4.5 3.5 3 2.5-2 4 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>`,
+};
+function tabsHtml(on) {
+  const waiting = pendingNotes().length;
+  return `<nav class="tabs" aria-label="Main"><div class="inner">${[
+    ["#home", "Patterns", "yarn", "t-pink"], ["#library", "Ready-made", "spark", "t-lav"], ["#feedback", "Notes", "note", "t-sky"], ["#more", "More", "more", "t-mint"],
+  ].map(([h, label, icon, c]) => `<button class="${c}" data-go="${h}"${h === on ? ' aria-current="page"' : ""}>${TAB_ICONS[icon]}<span>${label}</span>${
+    h === "#feedback" && waiting ? `<span class="count" aria-label="${waiting} waiting to send">${waiting}</span>` : ""}</button>`).join("")}</div></nav>`;
+}
+
+function isFinished(p) {
+  if (p.kind === "written") { const { made, total } = projectTotals(p); return total > 0 && made >= total; }
+  return progressFor(p).step >= stepsFor(p).length;
+}
+function patternCardHtml(p) {
+  if (p.kind === "written") return projectCard(p);
+  const steps = stepsFor(p), pr = progressFor(p), pf = prefsFor(p);
+  const done = Math.min(pr.step, steps.length);
+  return `<button class="card pattern-card" data-go="#pattern/${p.id}">
+    <canvas data-thumb="${p.id}" aria-hidden="true"></canvas>
+    <span><b>${esc(p.name)}</b>
+      <span class="muted small">${p.grid[0].length} × ${p.grid.length} · ${pf.mode === "c2c" ? "C2C" : "Single crochet rows"}</span>
+      <span class="bar" style="display:block;margin:8px 0 4px"><i style="width:${done / steps.length * 100}%"></i></span>
+      <span class="small">${done >= steps.length ? `<b style="display:inline;font:inherit;color:var(--done);font-weight:700">Finished!</b>` : `Row ${done + 1} of ${steps.length}`}</span>
+    </span></button>`;
+}
+// The pattern she's on, big, with a button straight back to her row.
+function keepCardHtml(p) {
+  if (p.kind === "written") {
+    const { made, total } = projectTotals(p);
+    return `<div class="card keep taped">
+      <button class="pattern-card" data-go="#project/${p.id}">
+        <span class="project-icon">${YARN_SVG}</span>
+        <span><span class="tag">${made ? "Keep going" : "Up next"}</span><b>${esc(p.name)}</b>
+          <span class="muted small">${made} of ${total} pieces made</span>
+          <span class="bar" style="display:block;margin:8px 0 0"><i style="width:${total ? made / total * 100 : 0}%"></i></span></span></button>
+      <button class="btn primary" data-go="#project/${p.id}">${made ? "Keep going" : "Start"}</button>
+    </div>`;
+  }
+  const steps = stepsFor(p), pr = progressFor(p), started = pr.step > 0 || pr.inrow > 0;
+  return `<div class="card keep taped">
+    ${started ? `<span class="sticker" aria-hidden="true">row ${pr.step + 1}!</span>` : ""}
+    <button class="pattern-card" data-go="#pattern/${p.id}">
+      <canvas data-thumb="${p.id}" aria-hidden="true"></canvas>
+      <span><span class="tag">${started ? "Keep going" : "Up next"}</span><b>${esc(p.name)}</b>
+        <span class="muted small">Row ${pr.step + 1} of ${steps.length} · ${Math.round(pr.step / steps.length * 100)}% done</span>
+        <span class="bar" style="display:block;margin:8px 0 0"><i style="width:${pr.step / steps.length * 100}%"></i></span></span></button>
+    <button class="btn primary" data-go="#work/${p.id}">${started ? "Keep crocheting" : "Start Row 1"}</button>
+  </div>`;
+}
+const backupDue = () => !data.settings.lastBackup || Date.now() - data.settings.lastBackup > 30 * 864e5;
+
 function renderHome() {
+  const all = [...allPatterns(), ...myProjects()].sort((a, b) => lastUsed(b) - lastUsed(a));
+  const keep = all.find(p => !isFinished(p)), rest = all.filter(p => p !== keep);
   app.innerHTML = `
   <div class="screen stack">
-    <div class="topbar"><h1 id="appTitle">Row by Row</h1>${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button></div>
-    <p class="muted">Pick a pattern to keep crocheting.</p>
+    <div class="topbar" style="align-items:flex-start">
+      <div class="hello"><span class="hand">Hi Momma ♥</span><h1 id="appTitle">My crochet journal</h1>
+        <span class="small muted">${all.length} pattern${all.length === 1 ? "" : "s"}</span></div>
+      <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
+    </div>
     ${homeMsg ? `<p class="tip" role="status" style="margin:0">${esc(homeMsg)}</p>` : ""}
-    ${[...allPatterns(), ...myProjects()].sort((a, b) => lastUsed(b) - lastUsed(a)).map(p => {
-      if (p.kind === "written") return projectCard(p);
-      const steps = stepsFor(p), pr = progressFor(p), pf = prefsFor(p);
-      const done = Math.min(pr.step, steps.length);
-      return `<button class="card pattern-card" data-go="#pattern/${p.id}">
-        <canvas data-thumb="${p.id}" aria-hidden="true"></canvas>
-        <span><b>${esc(p.name)}</b>
-          <span class="muted small">${p.grid[0].length} × ${p.grid.length} · ${pf.mode === "c2c" ? "C2C" : "Single crochet rows"}</span>
-          <span class="bar" style="display:block;margin:8px 0 4px"><i style="width:${done / steps.length * 100}%"></i></span>
-          <span class="small">${done >= steps.length ? "Finished" : `Row ${done + 1} of ${steps.length}`}</span>
-        </span></button>`;
-    }).join("")}
-    <button class="btn quiet" data-act="new-picture">＋ New pattern from a chart or pixel art</button>
+    ${keep ? keepCardHtml(keep) : ""}
+    ${rest.length ? `<h2 class="sec">${keep ? "My other patterns" : "My patterns"}</h2>${rest.map(patternCardHtml).join("")}` : ""}
+    ${all.length ? "" : `<div class="card empty"><span class="hand">Nothing here yet</span>
+      <p class="muted" style="margin:0">Pick a ready-made pattern, or make one from a picture of a chart or pixel art.</p></div>`}
+    <h2 class="sec">Add a pattern</h2>
+    <div class="tiles">
+      <button class="card tile" data-act="new-picture"><span class="dot" style="background:var(--accent-soft);color:var(--accent)">${TAB_ICONS.pic}</span>
+        New from a picture<span class="small">A chart or pixel art</span></button>
+      <button class="card tile" data-go="#library"><span class="dot" style="background:var(--warm-soft);color:var(--warm)">${TAB_ICONS.spark.replace("<svg", '<svg width="24" height="24"')}</span>
+        Ready-made<span class="small">${typeof LIBRARY !== "undefined" ? LIBRARY.length : 0} designs to pick from</span></button>
+    </div>
     <input type="file" id="picFile" accept="image/*" hidden>
-    ${libraryCardHtml()}
-    ${syncCardHtml()}
-    ${backupCardHtml()}
-    <button class="card pattern-card" data-go="#feedback" style="grid-template-columns:48px minmax(0,1fr)">
-      <span class="note-icon" aria-hidden="true">${BUBBLE_SVG}</span>
-      <span><b>Ideas, problems, or a pattern wish?</b><span class="muted small">Write a note any time and send it when you're ready.${pendingNotes().length ? ` <b style="display:inline;font-size:1em;color:var(--accent)">${pendingNotes().length} waiting to send.</b>` : ""}</span></span>
-    </button>
+    ${backupDue() ? backupCardHtml() : ""}
     ${Math.random() < 0.1 ? loveLine() : ""}
-  </div>`;
+  </div>${tabsHtml("#home")}`;
   app.querySelectorAll("[data-thumb]").forEach(cv => {
-    const p = findPattern(cv.dataset.thumb);
-    drawChart(cv, p, { cell: 88 / Math.max(p.grid[0].length, p.grid.length * 0.8) });
+    const p = findPattern(cv.dataset.thumb), size = cv.closest(".keep") ? 96 : 88;
+    drawChart(cv, p, { cell: size / Math.max(p.grid[0].length, p.grid.length * 0.8) });
   });
   document.getElementById("picFile").addEventListener("change", e => { if (e.target.files[0]) startDraft(e.target.files[0]); });
   homeMsg = "";
+}
+
+function renderMore() {
+  const sc = data.settings.scale || 1;
+  app.innerHTML = `
+  <div class="screen stack">
+    <div class="topbar"><div class="title"><b style="font-size:1.5em">More</b><span>Text size, syncing and backup</span></div></div>
+    <div class="card stack taped tape-mint">
+      <div class="field-label" style="margin:0">Text size</div>
+      <div class="seg" role="group" aria-label="Text size">${[[1, "Normal"], [1.15, "Bigger"], [1.3, "Biggest"]].map(([v, l]) =>
+        `<button data-scale="${v}" aria-pressed="${sc === v}">${l}</button>`).join("")}</div>
+      <p class="small muted" style="margin:0">The Aa button at the top of the other screens changes it too.</p>
+    </div>
+    ${syncCardHtml()}
+    ${backupCardHtml()}
+  </div>${tabsHtml("#more")}`;
+  app.querySelectorAll("[data-scale]").forEach(b => b.onclick = () => {
+    data.settings.scale = +b.dataset.scale;
+    document.documentElement.style.setProperty("--scale", data.settings.scale); save(); render();
+  });
 }
 
 function yardage(p, count) {
@@ -327,7 +403,7 @@ function renderWork(p) {
     <div class="screen stack">
       <div class="topbar"><button class="iconbtn" data-go="#pattern/${p.id}" aria-label="Back">←</button>
         <div class="title"><b>All ${steps.length} rows done</b><span>${esc(p.name)}</span></div></div>
-      <div class="card stack"><b style="font-size:1.6em">Finished!</b>
+      <div class="card stack taped"><b style="font:800 2em/1 var(--font-head)">Finished!</b>
         <p style="margin:0">Weave in your ends, add a border if you like, and block it flat.</p>
         ${loveLine()}
         <div class="chart-wrap" id="chartWrap"><canvas id="chart"></canvas></div>
@@ -354,7 +430,7 @@ function renderWork(p) {
       ${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
     <div class="bar"><i style="width:${pr.step / steps.length * 100}%"></i></div>
-    <div class="card stack">
+    <div class="card stack taped tape-mint">
       <div class="row-title"><b>Row ${s.n}</b><span class="count-badge">${s.count} ${unitWord(p, s.count)}</span></div>
       <div class="dir">${s.side ? s.side + " · " : ""}${s.direction.replace(/^./, c => c.toUpperCase())}</div>
       <div class="shaping">${s.shaping}</div>
@@ -424,7 +500,7 @@ const CLOUD_SVG = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" s
 function onSyncChange(remoteChanged) {
   if (window.syncState().status === "synced") uploadAtts();
   const v = route()[0];
-  if (v === "home" || (["pattern", "work", "project", "piece"].includes(v) && remoteChanged)) render();
+  if (v === "home" || v === "more" || (["pattern", "work", "project", "piece"].includes(v) && remoteChanged)) render();
 }
 window.RBR = { getData: () => data, resnap, save, onSyncChange,
   persist };
@@ -538,13 +614,13 @@ function renderFeedback() {
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar">
-      <button class="iconbtn" data-go="${back}" aria-label="Back">←</button>
+      ${lastPlace ? `<button class="iconbtn" data-go="${back}" aria-label="Back">←</button>` : ""}
       <div class="title"><b>Notes and ideas</b><span>Thoughts, problems, wishes</span></div>
       <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
     ${feedbackMsg ? `<p class="tip" role="status" style="margin:0">${esc(feedbackMsg)}</p>` : ""}
     ${attNoRoom ? `<p class="tip" role="alert" style="margin:0">Your note is saved, but its pictures didn't fit on this phone, so they were left off.</p>` : ""}
-    <div class="card stack">
+    <div class="card stack taped tape-sky">
       <label for="noteText" class="field-label" style="margin:0">Write a note</label>
       <textarea id="noteText" rows="5" placeholder="What's on your mind? Something confusing, a wish, a problem..."
         style="width:100%;min-height:140px;border-radius:12px;border:1px solid var(--line);padding:12px;font:inherit;background:var(--surface);color:var(--ink);resize:vertical">${esc(data.draft || "")}</textarea>
@@ -570,7 +646,7 @@ function renderFeedback() {
     ${pending.length ? `<div class="card stack"><h2 style="margin:0">Saved, not sent yet (${pending.length})</h2>${pending.map(n => noteItem(n, true)).join("")}</div>` : ""}
     ${sent.length ? `<details class="card"><summary><b>Sent notes (${sent.length})</b></summary>
       <div class="stack" style="margin-top:12px">${sent.slice().reverse().map(n => noteItem(n, true)).join("")}</div></details>` : ""}
-  </div>`;
+  </div>${tabsHtml("#feedback")}`;
   feedbackMsg = ""; attNoRoom = false;
   wireAttach();
   const box = document.getElementById("noteText");

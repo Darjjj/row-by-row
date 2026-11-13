@@ -22,18 +22,17 @@ function renderLibrary() {
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar">
-      <button class="iconbtn" data-go="#home" aria-label="Back to patterns">←</button>
       <div class="title"><b>Ready-made patterns</b><span>Tap one to see it bigger</span></div>
       <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
-    ${groups.map(g => `<h2 style="margin:8px 0 0">${esc(g.name)}</h2>
+    ${groups.map(g => `<h2 class="sec">${esc(g.name)}</h2>
       <div class="lib-grid">${g.items.map(it => `
         <button class="card lib-card" data-go="#library/${it.id}">
           <canvas data-lib="${it.id}" aria-hidden="true"></canvas>
           <b>${esc(it.name)}</b>
-          <span class="small muted">${it.grid[0].length} × ${it.grid.length} · ${it.colors.length} colors${libHave(it) ? ` · <span style="color:var(--accent);font-weight:700">✓ Added</span>` : ""}</span>
+          <span class="small muted">${it.grid[0].length} × ${it.grid.length} · ${it.colors.length} colors${libHave(it) ? ` · <span style="color:var(--done);font-weight:700">✓ Added</span>` : ""}</span>
         </button>`).join("")}</div>`).join("")}
-  </div>`;
+  </div>${tabsHtml("#library")}`;
   app.querySelectorAll("[data-lib]").forEach(cv => {
     const it = libFind(cv.dataset.lib), W = it.grid[0].length, H = it.grid.length;
     const box = Math.max(60, (Math.min(innerWidth, 640) - 80) / 2 - 24);
@@ -51,7 +50,7 @@ function renderLibraryItem(it) {
       <div class="title"><b>${esc(it.name)}</b><span>${W} × ${H} squares, ${fmt(W * H)} stitches</span></div>
       <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
-    <div class="card stack">
+    <div class="card stack taped tape-lav">
       <canvas id="libChart" aria-label="${esc(it.name)} pattern" style="justify-self:center;align-self:center;border-radius:8px"></canvas>
       ${have
         ? `<p class="tip" style="margin:0">This one is already in your patterns.</p>

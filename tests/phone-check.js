@@ -251,7 +251,9 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       ok(!(await page.$(".att-row")), "and can be taken off again");
       const [ac2] = await Promise.all([page.waitForFileChooser(), page.click("[data-attadd]")]);
       await ac2.accept([CHART]); await page.waitForSelector(".att img");
-      await page.type("#noteText", "Colors look off"); await page.click('[data-act="save-note"]'); await wait(200);
+      await page.type("#noteText", "Colors look off");
+      await page.$eval('[data-act="save-note"]', e => e.scrollIntoView({ block: "center" }));   // clear of the fixed tabs
+      await page.click('[data-act="save-note"]'); await wait(200);
       const saved = await page.evaluate(() => { const n = data.notes.find(n => n.text === "Colors look off");
         return { kinds: (n.atts || []).map(a => a.kind).join(","), local: (n.atts || []).filter(a => (localStorage.getItem("rowbyrow.att." + a.id) || "").startsWith("data:image/jpeg")).length,
           sizes: (n.atts || []).map(a => (localStorage.getItem("rowbyrow.att." + a.id) || "").length) }; });
@@ -381,8 +383,10 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       let file = null;
       for (let i = 0; i < 50 && !file; i++) { await wait(100); file = fs.readdirSync(dl).find(f => /^row-by-row-backup-\d{4}-\d\d-\d\d\.json$/.test(f)); }
       ok(!!file && /Backup saved/.test(await page.evaluate(() => document.body.innerText)), `a backup file is downloaded (${file})`);
+      await page.goto(URL + "#more", { waitUntil: "load" });
+      ok(/Last saved/.test(await page.evaluate(() => document.body.innerText)), "More shows when the last backup was saved");
       await page.goto(URL + "#home", { waitUntil: "load" });
-      ok(/Last saved/.test(await page.evaluate(() => document.body.innerText)), "the home screen shows when the last backup was saved");
+      ok(!(await page.$('#app [data-go="#backup"]')), "with a fresh backup, home doesn't ask for one");
       await page.evaluate(() => localStorage.removeItem("rowbyrow.v1"));
       await page.goto(URL + "#backup", { waitUntil: "load" }); await page.reload({ waitUntil: "load" });
       const wiped = await state();

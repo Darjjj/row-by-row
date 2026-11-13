@@ -1,0 +1,6 @@
+Fonts stored here so the app works offline. All are licensed under the SIL Open Font License 1.1
+(https://openfontlicense.org), from Google Fonts (Latin subset):
+
+  atkinson-hyperlegible-*.woff2  Atkinson Hyperlegible, Copyright 2020 Braille Institute of America, Inc.
+  baloo-2-500-800.woff2          Baloo 2, Copyright 2019 Ek Type
+  caveat-600-700.woff2           Caveat, Copyright 2014 The Caveat Project Authors

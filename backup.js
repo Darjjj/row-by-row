@@ -126,7 +126,7 @@ function renderBackup() {
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar">
-      <button class="iconbtn" data-go="#home" aria-label="Back to patterns">←</button>
+      <button class="iconbtn" data-go="#more" aria-label="Back to More">←</button>
       <div class="title"><b>Backup</b><span>${last ? `Last saved ${backupDay(last)} on this device` : "No backup saved on this device yet"}</span></div>
       <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
