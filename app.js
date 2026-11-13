@@ -434,10 +434,28 @@ function composeMessage(list) {
     `${list.length > 1 ? `${i + 1}) ` : ""}${n.text}\n   (${when(n.at)}${n.where ? " · " + n.where : ""})`).join("\n\n");
 }
 
-async function sendNotes() {
+const signedIn = () => !!(window.syncState && window.syncState().user && window.syncSendFeedback);
+
+// Signed in: notes go straight to the feedback inbox. Otherwise (or if she picks Share), the phone's share menu.
+async function sendNotes(viaShare) {
   saveDraftAsNote();
   const list = pendingNotes();
   if (!list.length) { feedbackMsg = "Write a note first, then tap Send."; return render(); }
+  if (!viaShare && signedIn()) {
+    feedbackMsg = "Sending..."; render();
+    document.querySelectorAll('[data-act="send-notes"],[data-act="share-notes"]').forEach(b => b.disabled = true);
+    try {
+      await window.syncSendFeedback(list);
+      list.forEach(n => { n.sent = true; n.sentAt = Date.now(); n.via = "inbox"; }); save();
+      feedbackMsg = list.length === 1 ? "Sent. Thank you!" : `${list.length} notes sent. Thank you!`;
+    } catch (e) {
+      feedbackMsg = e && e.code === "timeout"
+        ? "No connection right now. Your notes are saved here. Tap Send again when you're online."
+        : "That didn't go through. Your notes are saved here. Try again in a bit, or tap Share instead.";
+      console.warn("feedback:", e && (e.code || e.message));
+    }
+    return render();
+  }
   const text = composeMessage(list);
   if (navigator.share) {
     try {
@@ -484,7 +502,10 @@ function renderFeedback() {
         <span>Add where I am: <b>${esc(where)}</b></span></label>` : ""}
       <button class="btn primary" data-act="send-notes">${pending.length ? `Send, with ${pending.length} saved note${pending.length > 1 ? "s" : ""}` : "Send"}</button>
       <button class="btn quiet" data-act="save-note">Save for later</button>
-      <p class="small muted" style="margin:0">Send opens your phone's share menu. Pick Messages, WhatsApp or email and choose who to send it to.</p>
+      ${signedIn()
+        ? `<p class="small muted" style="margin:0">Send goes straight to the app's inbox, so you don't need to pick anyone.
+            <button class="linkbtn" data-act="share-notes" style="min-height:0;padding:0">Share it yourself instead</button></p>`
+        : `<p class="small muted" style="margin:0">Send opens your phone's share menu. Pick Messages, WhatsApp or email and choose who to send it to.</p>`}
       <div id="fallback" class="stack" hidden>
         <p class="small" style="margin:0">This device can't open a share menu. Copy the text below and paste it into a message.</p>
         <textarea id="fallbackText" rows="6" readonly style="width:100%;border-radius:12px;border:1px solid var(--line);padding:10px;font:inherit;background:var(--bg);color:var(--ink)"></textarea>
@@ -514,7 +535,8 @@ app.addEventListener("click", async e => {
   }
   const act = t.dataset.act;
   if (act === "save-note") { feedbackMsg = saveDraftAsNote() ? "Saved. Send it whenever you like." : "Write a note first."; return render(); }
-  if (act === "send-notes") return sendNotes();
+  if (act === "send-notes") return sendNotes(false);
+  if (act === "share-notes") return sendNotes(true);
   if (act === "copy-notes") {
     const ta = document.getElementById("fallbackText");
     try { await navigator.clipboard.writeText(ta.value); t.textContent = "Copied"; } catch (err) { ta.select(); }

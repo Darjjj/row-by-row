@@ -7,6 +7,7 @@ A phone app for following pixel crochet patterns one row at a time. It's a plain
 - Progress is saved on the phone, separately for each style
 - New patterns from a ready-made chart (grid found automatically and read square by square) or from any picture (crop and zoom, size, number of colors, tidy stray squares), with border and yarn names
 - Sign in with Google to sync patterns, progress and notes between devices
+- Notes and ideas: signed in, Send delivers them to a feedback inbox (`tools/read_feedback.py` reads it with a read-only key); signed out, the phone's share menu
 
 ## Tests
 - `node tests/sync.test.js` (or `bun`): sync merge rules, including a behind phone never wiping progress

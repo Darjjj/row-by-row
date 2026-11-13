@@ -1,0 +1,4 @@
+
+# Service account keys never go in the repo
+*.json.key
+feedback-reader.json

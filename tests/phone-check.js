@@ -18,7 +18,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     page.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
     await page.setViewport({ width: 375, height: 812, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
     await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: scheme }]);
-    await page.evaluateOnNewDocument(() => { window.SYNC_DISABLED = true; });
+    // No sync, and no share menu (headless Chrome has navigator.share but it never answers).
+    await page.evaluateOnNewDocument(() => { window.SYNC_DISABLED = true; Object.defineProperty(Navigator.prototype, "share", { value: undefined }); });
     await page.goto(URL, { waitUntil: "load" });
     // Saved data in the old format: Monster Duo at row 23, a note, no patterns key.
     await page.evaluate(() => localStorage.setItem("rowbyrow.v1", JSON.stringify({ settings: { scale: 1 },
@@ -98,6 +99,14 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const after = await page.evaluate(id => ({ list: [...document.querySelectorAll(".pattern-card b")].map(b => b.textContent),
       entry: JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns[id] }), id);
     ok(!after.list.includes("Renamed") && after.entry.deleted && after.entry.t && !after.entry.grid, `${scheme}: delete leaves a synced marker only`);
+    // Notes while signed out: Send falls back to copy-the-text (headless Chrome has no share menu).
+    await page.goto(URL + "#feedback", { waitUntil: "load" }); await page.waitForSelector("#noteText");
+    const fbText = await page.evaluate(() => document.body.innerText);
+    ok(/share menu/.test(fbText) && !/app's inbox/.test(fbText), `${scheme}: signed out, notes still use the share menu`);
+    await page.type("#noteText", "Test note"); await page.click('[data-act="send-notes"]'); await wait(200);
+    ok(await page.evaluate(() => !document.getElementById("fallback").hidden && /Test note/.test(document.getElementById("fallbackText").value)),
+      `${scheme}: no share menu, so the copy-the-text fallback appears`);
+    await page.screenshot({ path: OUT + `feedback-${scheme}.png`, fullPage: true });
     ok(errors.length === 0, `${scheme}: no page errors ${errors.join(" | ")}`);
     await page.close();
   }
