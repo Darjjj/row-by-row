@@ -1,5 +1,5 @@
 // Pictures with notes: the picture she was making a pattern from (with the grid the app found drawn on it) and
-// the pattern it made, a picture of the pattern she's on, or any picture she adds. Kept small (600 px JPEG).
+// the pattern it made, a picture of the pattern she's on, or any picture she adds. Kept small: 600 px JPEGs, or 1200 px for pictures she adds (screenshots need readable text).
 // Until a note is sent they stay on this phone (localStorage, one key each, outside the synced data). Sent to the
 // inbox, each goes to the cloud as its own small entry, users/{uid}/attachments/{id}, which her own-data rules
 // already allow; tools/read_feedback.py saves them. Sent through the share menu, they go along as files.
@@ -131,7 +131,7 @@ function wireAttach() {
     if (!file) return;
     try {
       const img = await loadPicture(file);
-      noteAtts.push({ id: attId(), kind: "added", data: shrinkToJpeg(img) });
+      noteAtts.push({ id: attId(), kind: "added", data: shrinkToJpeg(img, 1200) });   // bigger, so text in a screenshot stays readable
     } catch (e) { feedbackMsg = "That file couldn't be opened as a picture."; }
     render();
   });
