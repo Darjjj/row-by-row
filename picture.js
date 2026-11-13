@@ -110,10 +110,15 @@ function colorName(hex) {
 function makeGrid(rgbs, W, H, k, opts = {}) {
   let { labels, palette } = quantize(rgbs, k);
   if (opts.tidy) labels = tidy(labels, W, H);
+  return letterGrid(labels, palette, W, H);
+}
+
+// Color index per square + palette -> lettered grid and named colors, most-used color first.
+const CODES = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+function letterGrid(labels, palette, W, H) {
   const counts = palette.map(() => 0);
   labels.forEach(l => counts[l]++);
   const order = palette.map((_, i) => i).filter(i => counts[i] > 0).sort((a, b) => counts[b] - counts[a]);
-  const CODES = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const code = {}; order.forEach((i, n) => code[i] = CODES[n]);
   const grid = [];
   for (let y = 0; y < H; y++) { let row = ""; for (let x = 0; x < W; x++) row += code[labels[y * W + x]]; grid.push(row); }
@@ -128,6 +133,190 @@ function makeGrid(rgbs, W, H, k, opts = {}) {
   return { grid, colors };
 }
 
+// ---------- reading a ready-made chart ----------
+// A chart gives itself away by repeating: grid lines and color changes fall every square, evenly spaced.
+
+// Total color change between each column and the next (gx), and each row and the next (gy).
+function edgeProfiles(px, w, h) {
+  const gx = new Float64Array(w), gy = new Float64Array(h), row = w * 4;
+  for (let y = 0; y < h; y++) for (let x = 0, i = y * row; x < w; x++, i += 4) {
+    if (x + 1 < w) gx[x] += Math.abs(px[i] - px[i + 4]) + Math.abs(px[i + 1] - px[i + 5]) + Math.abs(px[i + 2] - px[i + 6]);
+    if (y + 1 < h) gy[y] += Math.abs(px[i] - px[i + row]) + Math.abs(px[i + 1] - px[i + row + 1]) + Math.abs(px[i + 2] - px[i + row + 2]);
+  }
+  return { gx, gy };
+}
+
+// The evenly spaced comb along one direction: spacing p and offset ph of its teeth, or null.
+function lineComb(prof) {
+  const n = prof.length;
+  const s = Float64Array.from(prof, (v, i) => 0.5 * (prof[i - 1] || 0) + v + 0.5 * (prof[i + 1] || 0));
+  const at = x => { const i = Math.round(x); return Math.max(s[i - 1] || 0, s[i] || 0, s[i + 1] || 0); };
+  let mean = 0; s.forEach(v => mean += v); mean /= n;
+  // Rough spacing: the strongest repeat (autocorrelation peak), preferring the smallest one
+  // that repeats about as strongly, since twice the spacing also repeats.
+  const maxLag = Math.floor(n / 6), ac = new Float64Array(maxLag + 2);
+  for (let lag = 4; lag <= maxLag + 1; lag++) {
+    let t = 0; for (let i = 0; i + lag < n; i++) t += (s[i] - mean) * (s[i + lag] - mean);
+    ac[lag] = t / (n - lag);
+  }
+  const peaks = [];
+  for (let lag = 5; lag <= maxLag; lag++) if (ac[lag] > 0 && ac[lag] >= ac[lag - 1] && ac[lag] >= ac[lag + 1]) peaks.push(lag);
+  if (!peaks.length) return null;
+  const top = peaks.reduce((a, b) => ac[b] > ac[a] ? b : a);
+  const p0 = peaks.find(l => ac[l] >= 0.6 * ac[top] && Math.abs(top / l - Math.round(top / l)) < 0.12) || top;
+  // Exact spacing and offset: the comb that lands on the most change.
+  let best = { score: -1 };
+  for (let p = p0 - 1; p <= p0 + 1; p += 0.02) for (let ph = 0; ph < p; ph += 0.5) {
+    let t = 0, k = 0; for (let x = ph; x < n; x += p, k++) t += at(x);
+    if (t / k > best.score) best = { score: t / k, p, ph };
+  }
+  const { p, ph } = best, pos = [], T = [], M = [];
+  for (let x = ph; x < n; x += p) { pos.push(x); T.push(at(x)); M.push(at(x + p / 2)); }
+  // Each tooth: 2 = a line (stands out from the middles of the squares beside it),
+  // 1 = nothing there, 0 = something else (numbers in the margin, a photo...).
+  const sorted = T.slice().sort((a, b) => a - b), floor = 0.12 * sorted[Math.floor(sorted.length * 0.75)];
+  const state = T.map((t, k) => {
+    const mid = Math.min(M[k] ?? Infinity, M[k - 1] ?? Infinity);   // the quieter side: the inside of the grid
+    return t > 1.8 * mid && t > floor ? 2 : t <= floor && mid <= floor ? 1 : 0;
+  });
+  // The grid: the longest run of lines, allowing short stretches of nothing (or one odd tooth) inside.
+  let span = null, first = -1, last = -1, empty = 0, odd = 0;
+  const close = () => { if (first >= 0 && (!span || last - first > span[1] - span[0])) span = [first, last]; first = -1; };
+  state.forEach((v, k) => {
+    if (v === 2) { if (first < 0) first = k; last = k; empty = odd = 0; }
+    else if (first >= 0 && (v === 1 ? ++empty > 8 : ++odd > 1)) { close(); empty = odd = 0; }
+  });
+  close();
+  if (!span || span[1] - span[0] < 4) return null;
+  return { s, at, p, pos, state, span };
+}
+
+// Exact line positions: a straight-line fit through the real peak of each line in the span.
+function fitLines(c) {
+  let sk = 0, sx = 0, skk = 0, skx = 0, m = 0;
+  const r = Math.max(1, Math.round(c.p * 0.25));
+  for (let k = c.span[0]; k <= c.span[1]; k++) {
+    if (c.state[k] !== 2) continue;
+    let wsum = 0, xsum = 0;
+    for (let x = Math.round(c.pos[k]) - r; x <= Math.round(c.pos[k]) + r; x++) if (x >= 0 && x < c.s.length) { wsum += c.s[x]; xsum += c.s[x] * x; }
+    if (!wsum) continue;
+    const xc = xsum / wsum; sk += k; sx += xc; skk += k * k; skx += k * xc; m++;
+  }
+  const size = (m * skx - sk * sx) / (m * skk - sk * sk), a = (sx - size * sk) / m;
+  let on = 0, mid = 0;
+  for (let k = c.span[0]; k <= c.span[1]; k++) { on += c.at(a + k * size); if (k < c.span[1]) mid += c.at(a + (k + 0.5) * size); }
+  const count = c.span[1] - c.span[0];
+  return { start: a + c.span[0] * size, size, count, contrast: (on / (count + 1)) / (mid / count + 1e-9) };
+}
+
+// The chart's grid in picture pixels, or null if this doesn't look like a chart.
+function detectGrid(px, w, h) {
+  // A small file with few colors is pixel art at one pixel per square.
+  if (w <= 200 && h <= 200 && w >= 8 && h >= 8) {
+    const seen = new Set();
+    for (let i = 0; i < w * h * 4 && seen.size <= 40; i += 4) seen.add((px[i] << 16) | (px[i + 1] << 8) | px[i + 2]);
+    if (seen.size <= 40) return { x0: 0, x1: w, y0: 0, y1: h, cols: w, rows: h, contrast: Infinity };
+  }
+  const { gx, gy } = edgeProfiles(px, w, h);
+  const X = lineComb(gx), Y = lineComb(gy);
+  if (!X || !Y) return null;
+  // A real column has the grid's horizontal lines running through it (and a real row, the vertical lines).
+  // That trims a frame or a margin of numbers that happens to line up with the grid.
+  const gray = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) gray[i] = px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2];
+  const g = (x, y) => gray[clampI(y, h) * w + clampI(x, w)];
+  // A thin drawn line: darker (or lighter) than the picture on BOTH sides of it. A plain color change
+  // between two squares is only different on one side, so it doesn't count.
+  const thin = (c, a, b) => Math.max(0, Math.min(c - a, c - b)) + Math.max(0, Math.min(a - c, b - c));
+  const ridge = (x, y, across) => {   // strongest thin line within a pixel of (x, y), running across or along
+    let best = 0;
+    for (let d = -1; d <= 1; d++) for (const o of [2, 3]) best = Math.max(best, across
+      ? thin(g(x, y + d), g(x, y + d - o), g(x, y + d + o))
+      : thin(g(x + d, y), g(x + d - o, y), g(x + d + o, y)));
+    return best;
+  };
+  const linesOf = c => c.pos.filter((_, k) => k >= c.span[0] && k <= c.span[1] && c.state[k] === 2);
+  function trim(c, other, across) {
+    const lines = linesOf(other), half = other.p / 2;
+    const strip = k => {             // line vs. square-middle strength of the other lines inside strip k
+      let on = 0, mid = 0;
+      for (let t = c.pos[k] + c.p / 4; t < c.pos[k + 1] - c.p / 4; t++) for (const L of lines) {
+        const x = Math.round(t);
+        on += across ? ridge(x, Math.round(L), true) : ridge(Math.round(L), x, false);
+        mid += across ? ridge(x, Math.round(L + half), true) : ridge(Math.round(L + half), x, false);
+      }
+      return { on, mid };
+    };
+    const inner = [];
+    for (let k = c.span[0]; k < c.span[1]; k++) inner.push(strip(k));
+    const ratio = inner.map(s => s.on / (s.mid + 1)).sort((a, b) => a - b)[inner.length >> 1];
+    if (ratio < 3) return false;     // no drawn grid lines (pixel art): nothing to check against
+    const typical = inner.map(s => s.on).sort((a, b) => a - b)[inner.length >> 1];
+    const real = k => { const s = strip(k); return s.on > 0.3 * typical && s.on > 1.5 * s.mid; };
+    while (c.span[1] - c.span[0] > 8 && !real(c.span[0])) c.span[0]++;
+    while (c.span[1] - c.span[0] > 8 && !real(c.span[1] - 1)) c.span[1]--;
+    return true;
+  }
+  // Pixel art without grid lines: a plain background at the edges looks like nothing, so if the
+  // squares divide the whole picture evenly, the whole picture is the grid.
+  const fill = (f, n) => {
+    const kL = Math.round(f.start / f.size), end = f.start + f.size * f.count, kR = Math.round((n - end) / f.size);
+    if (kL > 0 && Math.abs(f.start - kL * f.size) < 0.3 * f.size) { f.start -= kL * f.size; f.count += kL; }
+    if (kR > 0 && Math.abs(n - end - kR * f.size) < 0.3 * f.size) f.count += kR;
+  };
+  const Xspan = X.span.slice(), Yspan = Y.span.slice();
+  const drawn = trim(X, { ...Y, span: Yspan }, true) & trim(Y, { ...X, span: Xspan }, false);
+  const fx = fitLines(X), fy = fitLines(Y);
+  if (!drawn) { fill(fx, w); fill(fy, h); }
+  if (fx.count < 8 || fy.count < 8 || fx.count > 200 || fy.count > 200) return null;
+  if (fx.size / fy.size < 0.7 || fx.size / fy.size > 1.43) return null;   // squares, roughly
+  const contrast = Math.min(fx.contrast, fy.contrast);
+  if (contrast < 2) return null;
+  return { x0: fx.start, x1: fx.start + fx.size * fx.count, y0: fy.start, y1: fy.start + fy.size * fy.count, cols: fx.count, rows: fy.count, contrast };
+}
+const clampI = (v, n) => v < 0 ? 0 : v >= n ? n - 1 : v;
+
+// The color of each square: the middle color of the inside of the square, away from the grid lines.
+function chartCells(px, w, g) {
+  const cw = (g.x1 - g.x0) / g.cols, ch = (g.y1 - g.y0) / g.rows, out = [];
+  const mx = cw >= 4 ? Math.max(1, cw * 0.25) : 0, my = ch >= 4 ? Math.max(1, ch * 0.25) : 0, med = a => a.sort((p, q) => p - q)[a.length >> 1];
+  for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
+    const xa = Math.round(g.x0 + c * cw + mx), xb = Math.max(xa + 1, Math.round(g.x0 + (c + 1) * cw - mx));
+    const ya = Math.round(g.y0 + r * ch + my), yb = Math.max(ya + 1, Math.round(g.y0 + (r + 1) * ch - my));
+    const R = [], G = [], B = [];
+    for (let y = ya; y < yb; y++) for (let x = xa; x < xb; x++) {
+      const i = (y * w + x) * 4, a = px[i + 3] / 255, wh = 255 * (1 - a);
+      R.push(px[i] * a + wh); G.push(px[i + 1] * a + wh); B.push(px[i + 2] * a + wh);
+    }
+    out.push([med(R), med(G), med(B)]);
+  }
+  return out;
+}
+
+// Group square colors that are really the same yarn (JPEG noise, slight shading). No color count needed.
+function groupColors(rgbs, T = 0.05) {
+  const labs = rgbs.map(toLab);
+  let cents = [];
+  for (const l of labs) if (!cents.some(c => labDist2(l, c) < T * T)) cents.push(l);
+  if (cents.length > CODES.length) cents = quantize(rgbs, CODES.length).palette.filter(Boolean).map(toLab);
+  const labels = new Array(labs.length).fill(0);
+  for (let iter = 0; iter < 6; iter++) {
+    labs.forEach((l, j) => { let bd = Infinity; cents.forEach((c, i) => { const d = labDist2(l, c); if (d < bd) { bd = d; labels[j] = i; } }); });
+    const sums = cents.map(() => [0, 0, 0, 0]);
+    labs.forEach((l, j) => { const s = sums[labels[j]]; s[0] += l[0]; s[1] += l[1]; s[2] += l[2]; s[3]++; });
+    cents = cents.map((c, i) => sums[i][3] ? [sums[i][0] / sums[i][3], sums[i][1] / sums[i][3], sums[i][2] / sums[i][3]] : c);
+  }
+  const sums = cents.map(() => [0, 0, 0, 0]);
+  rgbs.forEach((c, j) => { const s = sums[labels[j]]; s[0] += c[0]; s[1] += c[1]; s[2] += c[2]; s[3]++; });
+  return { labels, palette: sums.map(s => s[3] ? [s[0] / s[3], s[1] / s[3], s[2] / s[3]] : null) };
+}
+
+// A chart picture + its grid -> pattern grid and named colors.
+function readChart(px, w, g) {
+  const { labels, palette } = groupColors(chartCells(px, w, g));
+  return letterGrid(labels, palette, g.cols, g.rows);
+}
+
 // Put a border of one color around a grid.
 function addBorder(grid, size, code) {
   if (!size) return grid.slice();
@@ -135,4 +324,5 @@ function addBorder(grid, size, code) {
   return [...Array(size).fill(full), ...grid.map(r => edge + r + edge), ...Array(size).fill(full)];
 }
 
-if (typeof module !== "undefined") module.exports = { cellColors, toLab, labDist2, toHex, quantize, tidy, colorName, makeGrid, addBorder };
+if (typeof module !== "undefined") module.exports = { cellColors, toLab, labDist2, toHex, quantize, tidy, colorName, makeGrid, letterGrid,
+  edgeProfiles, lineComb, fitLines, detectGrid, chartCells, groupColors, readChart, addBorder };

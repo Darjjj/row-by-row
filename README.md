@@ -5,18 +5,19 @@ A phone app for following pixel crochet patterns one row at a time. It's a plain
 - Single crochet rows (right- or left-handed) or corner to corner (C2C, bottom right to top left)
 - Crochet mode: big color counts in stitching order, tap colors as you finish them, chart with the current row outlined, screen stays on
 - Progress is saved on the phone, separately for each style
-- New patterns from any picture: crop and zoom, size, number of colors, tidy stray squares, border, yarn names
+- New patterns from a ready-made chart (grid found automatically and read square by square) or from any picture (crop and zoom, size, number of colors, tidy stray squares), with border and yarn names
 - Sign in with Google to sync patterns, progress and notes between devices
 
 ## Tests
 - `node tests/sync.test.js` (or `bun`): sync merge rules, including a behind phone never wiping progress
 - `node tests/picture.test.js`: Monster Duo drawn as a picture must come back square for square
-- `tests/phone-check.js`: headless Chrome at 375 px, light and dark; needs `puppeteer-core`, Chrome, and the local server running
+- `node tests/chart.test.js`: the real Monster Duo chart image (export it first with `python tests/export-chart.py`), synthetic charts, pixel art, and a photo that must not be taken for a chart
+- `tests/phone-check.js <chart.jpg> <photo.jpg>`: headless Chrome at 375 px, light and dark; needs `puppeteer-core`, Chrome, and the local server running
 
 ## Files
 - `pattern.js` turns a color grid into rows or C2C diagonals, and `verifySteps` rebuilds the chart from them as a check
 - `builtin.js` holds the built-in pattern(s)
-- `picture.js` turns a picture into a color grid (square averages, k-means color reduction in OKLab, color names)
+- `picture.js` turns a picture into a color grid (square averages, k-means color reduction in OKLab, color names) and finds and reads chart grids
 - `app.js` / `style.css` are the screens
 - `sw.js` keeps the files for offline use. **Bump `VERSION` in `sw.js` whenever you change a file.**
 

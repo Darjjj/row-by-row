@@ -171,7 +171,7 @@ function renderHome() {
           <span class="small">${done >= steps.length ? "Finished" : `Row ${done + 1} of ${steps.length}`}</span>
         </span></button>`;
     }).join("")}
-    <button class="btn quiet" data-act="new-picture">＋ New pattern from a picture</button>
+    <button class="btn quiet" data-act="new-picture">＋ New pattern from a picture or chart</button>
     <input type="file" id="picFile" accept="image/*" hidden>
     ${syncCardHtml()}
     <button class="card pattern-card" data-go="#feedback" style="grid-template-columns:48px minmax(0,1fr)">
@@ -578,11 +578,16 @@ function loadPicture(file) {
 }
 
 async function startDraft(file) {
+  app.innerHTML = `<div class="screen"><p class="muted" role="status">Reading the picture...</p></div>`;
+  await new Promise(r => setTimeout(r, 30));   // let that show before the work starts
   let pic;
   try { pic = await loadPicture(file); }
-  catch (e) { homeMsg = "That file couldn't be opened as a picture. Try a JPG or PNG."; return render(); }
+  catch (e) { homeMsg = "That file couldn't be opened as a picture. Try a JPG or PNG."; go("#home"); return render(); }
+  const px = pic.getContext("2d").getImageData(0, 0, pic.width, pic.height).data;
+  const found = detectGrid(px, pic.width, pic.height);
   const W = 50, H = clamp(Math.round(W * pic.height / pic.width), 5, 150);
-  draft = { pic, name: "", W, H, k: 6, zoom: 1, cx: pic.width / 2, cy: pic.height / 2, tidy: true,
+  draft = { pic, px, found, g: found && { ...found }, mode: found ? "chart" : "photo",
+    name: "", W, H, k: 6, zoom: 1, cx: pic.width / 2, cy: pic.height / 2, tidy: true,
     border: 0, borderCode: "A", names: [], view: "pattern", result: null };
   go("#new");
 }
@@ -598,12 +603,19 @@ function cropRect(d) {
 }
 
 function computeDraft(d) {
-  const r = cropRect(d), c = document.createElement("canvas");
-  c.width = d.W * SS; c.height = d.H * SS;
-  const ctx = c.getContext("2d", { willReadFrequently: true });
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(d.pic, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
-  const g = makeGrid(cellColors(ctx.getImageData(0, 0, c.width, c.height).data, d.W, d.H, SS), d.W, d.H, d.k, { tidy: d.tidy });
+  let g;
+  if (d.mode === "chart") {
+    g = readChart(d.px, d.pic.width, d.g);
+    if (d.foundColors === undefined) d.foundColors = g.colors.length;
+  }
+  else {
+    const r = cropRect(d), c = document.createElement("canvas");
+    c.width = d.W * SS; c.height = d.H * SS;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(d.pic, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+    g = makeGrid(cellColors(ctx.getImageData(0, 0, c.width, c.height).data, d.W, d.H, SS), d.W, d.H, d.k, { tidy: d.tidy });
+  }
   // Keep names she typed: each goes to the new color closest to the one she named, if it's still close.
   g.colors.forEach(col => {
     const lab = toLab(hexRgb(col.hex)); let best = null, bd = 0.0064;
@@ -619,21 +631,60 @@ function draftPattern(d) {
     colors: d.result.colors.map(({ code, name, hex }) => ({ code, name, hex })) };
 }
 
+// Grid fixes for a chart, each one square at a time. Returns false if it would leave the picture.
+function adjustGrid(d, act) {
+  const g = { ...d.g }, cw = (g.x1 - g.x0) / g.cols, ch = (g.y1 - g.y0) / g.rows;
+  const ops = {
+    "cols-": () => g.cols--, "cols+": () => g.cols++, "rows-": () => g.rows--, "rows+": () => g.rows++,
+    "left-out": () => { g.x0 -= cw; g.cols++; }, "left-in": () => { g.x0 += cw; g.cols--; },
+    "right-in": () => { g.x1 -= cw; g.cols--; }, "right-out": () => { g.x1 += cw; g.cols++; },
+    "top-out": () => { g.y0 -= ch; g.rows++; }, "top-in": () => { g.y0 += ch; g.rows--; },
+    "bottom-in": () => { g.y1 -= ch; g.rows--; }, "bottom-out": () => { g.y1 += ch; g.rows++; },
+    reset: () => Object.assign(g, d.found)
+  };
+  ops[act]();
+  const ok = g.cols >= 2 && g.rows >= 2 && g.cols <= 200 && g.rows <= 200 &&
+    g.x0 >= -0.5 && g.y0 >= -0.5 && g.x1 <= d.pic.width + 0.5 && g.y1 <= d.pic.height + 0.5;
+  if (ok) d.g = g;
+  return ok;
+}
+
 function renderNew() {
-  const d = draft;
+  const d = draft, chart = d.mode === "chart";
   if (!d.result) computeDraft(d);
+  const step = (act, label, aria) => `<button class="iconbtn" data-adj="${act}" aria-label="${aria}">${label}</button>`;
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar"><button class="iconbtn" id="dCancel" aria-label="Cancel">←</button>
-      <div class="title"><b>New pattern</b><span>From a picture</span></div></div>
+      <div class="title"><b>New pattern</b><span>${chart ? "From a chart" : "From a picture"}</span></div></div>
+    ${d.found ? `<div class="card stack">
+      <p style="margin:0">${chart ? "This looks like a chart, so each square is read exactly." : "Reading it as a photo: the colors are simplified to fit the size you pick."}</p>
+      <div class="seg" role="group" aria-label="Read the picture as">
+        <button data-mode-pick="chart" aria-pressed="${chart}">Chart squares</button>
+        <button data-mode-pick="photo" aria-pressed="${!chart}">Photo</button></div></div>` : ""}
     <div class="seg" role="group" aria-label="Show">
       <button data-view="pattern" aria-pressed="${d.view === "pattern"}">Pattern</button>
-      <button data-view="photo" aria-pressed="${d.view === "photo"}">Picture</button></div>
-    <div class="chart-wrap editor-preview" id="chartWrap"><canvas id="chart" aria-label="Preview. Drag to move the picture."></canvas></div>
-    <p class="small muted" style="margin:-6px 0 0">Drag to move the picture. Pinch or use Zoom to fill more of it.</p>
+      <button data-view="photo" aria-pressed="${d.view === "photo"}">${chart ? "Chart" : "Picture"}</button></div>
+    <div class="chart-wrap editor-preview" id="chartWrap"><canvas id="chart" aria-label="Preview"></canvas></div>
+    <p class="small muted" style="margin:-6px 0 0">${chart
+      ? "Tap Chart to check that the pink lines sit on the chart's lines."
+      : "Drag to move the picture. Pinch or use Zoom to fill more of it."}</p>
     <div class="card stack">
       <div><label class="field-label" for="dName">Name</label>
         <input id="dName" class="text-input" value="${esc(d.name)}" placeholder="My pattern" maxlength="60" enterkeyhint="done"></div>
+      ${chart ? `<p class="small muted" id="dSize" style="margin:0"></p>
+      <details class="adjust"><summary><b>Grid doesn't line up?</b></summary>
+        <div class="adjust-grid">
+          <span>Columns</span>${step("cols-", "−", "Fewer columns")}<b id="dCols">${d.g.cols}</b>${step("cols+", "+", "More columns")}
+          <span>Rows</span>${step("rows-", "−", "Fewer rows")}<b id="dRows">${d.g.rows}</b>${step("rows+", "+", "More rows")}
+          <span>Left edge</span>${step("left-out", "←", "Move left edge out")}<i></i>${step("left-in", "→", "Move left edge in")}
+          <span>Right edge</span>${step("right-in", "←", "Move right edge in")}<i></i>${step("right-out", "→", "Move right edge out")}
+          <span>Top edge</span>${step("top-out", "↑", "Move top edge out")}<i></i>${step("top-in", "↓", "Move top edge in")}
+          <span>Bottom edge</span>${step("bottom-in", "↑", "Move bottom edge in")}<i></i>${step("bottom-out", "↓", "Move bottom edge out")}
+        </div>
+        <p class="small muted" style="margin:8px 0 0">Columns and rows respace the whole grid. The edges add or remove one square at that side.</p>
+        <button class="linkbtn" data-adj="reset">Start over with what was found</button>
+      </details>` : `
       <div class="field-row">
         <div><label class="field-label" for="dW">Width</label><input id="dW" class="text-input" type="number" inputmode="numeric" min="5" max="150" value="${d.W}"></div>
         <div><label class="field-label" for="dH">Height</label><input id="dH" class="text-input" type="number" inputmode="numeric" min="5" max="150" value="${d.H}"></div>
@@ -643,7 +694,7 @@ function renderNew() {
         <input id="dZoom" type="range" min="1" max="4" step="0.01" value="${d.zoom}"></div>
       <div><label class="field-label" for="dK">Colors: <span id="dKv">${d.k}</span></label>
         <input id="dK" type="range" min="2" max="12" step="1" value="${d.k}"></div>
-      <label class="check"><input type="checkbox" id="dTidy" ${d.tidy ? "checked" : ""}><span>Tidy up stray single squares</span></label>
+      <label class="check"><input type="checkbox" id="dTidy" ${d.tidy ? "checked" : ""}><span>Tidy up stray single squares</span></label>`}
       <div><div class="field-label">Border</div>
         <div class="seg" role="group" aria-label="Border width">${[0, 1, 2, 3].map(n =>
           `<button data-border="${n}" aria-pressed="${d.border === n}">${n ? n + " sq" : "None"}</button>`).join("")}</div>
@@ -664,20 +715,10 @@ function renderNew() {
   $("dCancel").onclick = () => { draft = null; go("#home"); };
   $("dName").oninput = e => d.name = e.target.value;
   $("dName").onkeydown = e => { if (e.key === "Enter") e.target.blur(); };
-  const sizeBox = id => {
-    $(id).oninput = e => {
-      const v = parseInt(e.target.value, 10);
-      if (!(v >= 5 && v <= 150)) return;
-      if (id === "dW") { d.H = clamp(Math.round(d.H * v / d.W), 5, 150); $("dH").value = d.H; d.W = v; }
-      else d.H = v;
-      update(true);
-    };
-    $(id).onchange = e => { e.target.value = id === "dW" ? d.W : d.H; };
-  };
-  sizeBox("dW"); sizeBox("dH");
-  $("dZoom").oninput = e => { d.zoom = +e.target.value; update(true); };
-  $("dK").oninput = e => { d.k = +e.target.value; $("dKv").textContent = d.k; update(true); };
-  $("dTidy").onchange = e => { d.tidy = e.target.checked; update(true); };
+  app.querySelectorAll("[data-mode-pick]").forEach(b => b.onclick = () => {
+    if (d.mode === b.dataset.modePick) return;
+    d.mode = b.dataset.modePick; computeDraft(d); renderNew();
+  });
   app.querySelectorAll("[data-view]").forEach(b => b.onclick = () => {
     d.view = b.dataset.view;
     app.querySelectorAll("[data-view]").forEach(x => x.setAttribute("aria-pressed", x === b)); drawDraft();
@@ -695,8 +736,33 @@ function renderNew() {
     d.names = d.names.filter(n => labDist2(n.lab, lab) >= 0.0064).concat({ lab, name: col.name });
   };
 
+  if (chart) {
+    app.querySelectorAll("[data-adj]").forEach(b => b.onclick = () => {
+      if (!adjustGrid(d, b.dataset.adj)) return;
+      $("dCols").textContent = d.g.cols; $("dRows").textContent = d.g.rows;
+      update(true);
+    });
+    return drawDraft();
+  }
+
+  const sizeBox = id => {
+    $(id).oninput = e => {
+      const v = parseInt(e.target.value, 10);
+      if (!(v >= 5 && v <= 150)) return;
+      if (id === "dW") { d.H = clamp(Math.round(d.H * v / d.W), 5, 150); $("dH").value = d.H; d.W = v; }
+      else d.H = v;
+      update(true);
+    };
+    $(id).onchange = e => { e.target.value = id === "dW" ? d.W : d.H; };
+  };
+  sizeBox("dW"); sizeBox("dH");
+  $("dZoom").oninput = e => { d.zoom = +e.target.value; update(true); };
+  $("dK").oninput = e => { d.k = +e.target.value; $("dKv").textContent = d.k; update(true); };
+  $("dTidy").onchange = e => { d.tidy = e.target.checked; update(true); };
+
   // Drag to move the picture, pinch to zoom.
   const cv = $("chart"), pts = new Map();
+  cv.classList.add("draggable");
   let pinch = 0;
   cv.onpointerdown = e => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); pinch = 0; };
   cv.onpointermove = e => {
@@ -716,23 +782,41 @@ function renderNew() {
   drawDraft();
 }
 
+function sizeCanvas(cv, w, h) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  cv.style.width = w + "px"; cv.style.height = h + "px";
+  const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
+  return ctx;
+}
+
 function drawDraft() {
   const d = draft, p = draftPattern(d), W = p.grid[0].length, H = p.grid.length;
   const wrap = document.getElementById("chartWrap"), cv = document.getElementById("chart");
   if (!wrap) return;
-  const cell = Math.min((wrap.clientWidth - 2) / W, innerHeight * 0.5 / H);
-  d.cell = cell;
-  if (d.view === "photo") {
-    const dpr = Math.min(window.devicePixelRatio || 1, 3), r = cropRect(d), b = d.border * cell;
-    cv.width = Math.round(W * cell * dpr); cv.height = Math.round(H * cell * dpr);
-    cv.style.width = W * cell + "px"; cv.style.height = H * cell + "px";
-    const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
+  const fit = (w, h) => Math.min((wrap.clientWidth - 2) / w, innerHeight * 0.5 / h);
+  if (d.view === "photo" && d.mode === "chart") {
+    // The chart itself with the grid it was read with drawn on top, half a square of margin around it.
+    const g = d.g, cw = (g.x1 - g.x0) / g.cols, ch = (g.y1 - g.y0) / g.rows, cell = fit(g.cols + 1, g.rows + 1);
+    const ctx = sizeCanvas(cv, (g.cols + 1) * cell, (g.rows + 1) * cell);
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, (g.cols + 1) * cell, (g.rows + 1) * cell);
+    ctx.drawImage(d.pic, g.x0 - cw / 2, g.y0 - ch / 2, cw * (g.cols + 1), ch * (g.rows + 1), 0, 0, (g.cols + 1) * cell, (g.rows + 1) * cell);
+    ctx.strokeStyle = "rgba(233,30,140,.9)"; ctx.lineWidth = 1; ctx.beginPath();
+    for (let i = 0; i <= g.cols; i++) { const x = Math.round((i + 0.5) * cell) + 0.5; ctx.moveTo(x, cell / 2); ctx.lineTo(x, (g.rows + 0.5) * cell); }
+    for (let j = 0; j <= g.rows; j++) { const y = Math.round((j + 0.5) * cell) + 0.5; ctx.moveTo(cell / 2, y); ctx.lineTo((g.cols + 0.5) * cell, y); }
+    ctx.stroke();
+  } else if (d.view === "photo") {
+    const cell = fit(W, H), r = cropRect(d), b = d.border * cell;
+    d.cell = cell;
+    const ctx = sizeCanvas(cv, W * cell, H * cell);
     ctx.fillStyle = p.colors.find(c => c.code === d.borderCode).hex; ctx.fillRect(0, 0, W * cell, H * cell);
     ctx.drawImage(d.pic, r.x, r.y, r.w, r.h, b, b, d.W * cell, d.H * cell);
-  } else drawChart(cv, p, { cell });
+  } else { d.cell = fit(W, H); drawChart(cv, p, { cell: d.cell }); }
   const counts = {}; p.grid.join("").split("").forEach(k => counts[k] = (counts[k] || 0) + 1);
-  document.getElementById("dSize").textContent =
-    `${W} × ${H} squares${d.border ? " with the border" : ""}. In C2C with 1 in blocks, about ${W} × ${H} in.`;
+  document.getElementById("dSize").textContent = d.mode === "chart"
+    ? `${W} × ${H} squares${d.border ? " with the border" : ""}, ${p.colors.length} colors.` +
+      (p.colors.length > d.foundColors * 1.5 + 2 ? " That's a lot more colors than before, which usually means the grid is off." : "")
+    : `${W} × ${H} squares${d.border ? " with the border" : ""}. In C2C with 1 in blocks, about ${W} × ${H} in.`;
   const list = document.getElementById("dColors");
   if (!list.contains(document.activeElement)) list.innerHTML = p.colors.map((c, i) => `
     <div class="key-row"><span class="sw" style="background:${c.hex}"></span><span class="code">${c.code}</span>

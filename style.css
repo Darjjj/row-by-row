@@ -112,7 +112,10 @@ textarea:focus-visible, input:focus-visible { outline: 3px solid var(--accent); 
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 input[type="range"] { width: 100%; accent-color: var(--accent); min-height: 32px; }
 .editor-preview { display: grid; place-items: center; background: var(--bg); }
-.editor-preview canvas { touch-action: none; cursor: grab; }
+.editor-preview canvas.draggable { touch-action: none; cursor: grab; }
+.adjust summary { min-height: 40px; display: flex; align-items: center; }
+.adjust-grid { display: grid; grid-template-columns: minmax(0, 1fr) 48px 44px 48px; gap: 8px 10px; align-items: center; margin-top: 10px; }
+.adjust-grid b, .adjust-grid i { text-align: center; font-variant-numeric: tabular-nums; }
 .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .swatch-btn { width: 40px; height: 40px; border-radius: 10px; border: 1px solid rgba(0,0,0,.25); cursor: pointer; }
 .swatch-btn[aria-pressed="true"] { outline: 3px solid var(--accent); outline-offset: 2px; }
