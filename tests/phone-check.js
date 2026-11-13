@@ -67,7 +67,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       await page.goto(URL + "#home", { waitUntil: "load" });
       await pick(PHOTO);
       ed = await page.evaluate(() => ({ banner: !!document.querySelector("[data-mode-pick]"), colors: document.querySelectorAll("#dColors .key-row").length }));
-      ok(!ed.banner && ed.colors === 6, `${scheme}: photo opens as a photo with 6 colors (${ed.colors})`);
+      ok(!ed.banner && ed.colors >= 2 && ed.colors <= 6, `${scheme}: photo opens as a photo with up to 6 colors (${ed.colors})`);
       await page.$eval("#dK", el => { el.value = 8; el.dispatchEvent(new Event("input", { bubbles: true })); });
       await page.click('[data-border="2"]');
       await page.$eval('#dColors input[data-i="0"]', el => { el.value = "Sky Blue Caron"; el.dispatchEvent(new Event("input", { bubbles: true })); });
@@ -78,7 +78,11 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       await page.click("#dSave"); await page.waitForFunction(() => location.hash.startsWith("#pattern/p"));
       const saved = await page.evaluate(() => { const ps = Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns), p = ps.find(x => x.name === "My pattern");
         return p && { w: p.grid[0].length, n: p.colors.length, names: p.colors.map(c => c.name) }; });
-      ok(saved && saved.w === 54 && saved.n === 8 && saved.names.includes("Sky Blue Caron"), `${scheme}: photo saved ${saved && saved.w + " wide, " + saved.n + " colors"}, yarn name kept`);
+      ok(saved && saved.w === 54 && saved.n <= 8 && saved.names.includes("Sky Blue Caron"), `${scheme}: photo saved ${saved && saved.w + " wide, " + saved.n + " colors"} (up to 8), yarn name kept`);
+      // Never more than 10 yarn colors, and no two that would look like the same yarn.
+      const limits = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("rowbyrow.v1")).patterns).filter(p => p.grid)
+        .every(p => p.colors.length <= 10 && p.colors.every((a, i) => p.colors.every((b, j) => j <= i || !sameYarn(toLab(hexRgb(a.hex)), toLab(hexRgb(b.hex)))))));
+      ok(limits, `${scheme}: saved patterns have at most 10 colors and no same-looking pair`);
     }
 
     // ---- crochet the chart pattern, check order, rename, delete

@@ -581,6 +581,7 @@ app.addEventListener("click", e => {
 // The picture is kept in memory only; the finished grid is what gets saved and synced.
 let draft = null, homeMsg = "";
 const SS = 6;   // pixels sampled across each square, each way
+const MAX_COLORS = 10;   // the most yarn colors she wants in one project (6-10 is the sweet spot)
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const hexRgb = h => { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
 
@@ -607,25 +608,28 @@ async function startDraft(file) {
   catch (e) { homeMsg = "That file couldn't be opened as a picture. Try a JPG or PNG."; go("#home"); return render(); }
   const px = pic.getContext("2d").getImageData(0, 0, pic.width, pic.height).data;
   const { grid: found, pixel } = analyzePicture(px, pic.width, pic.height);
+  // A chart keeps its own colors (same-looking shades combined), up to the most she wants in a project.
+  const chartColors = found ? readChart(px, pic.width, found).distinct : 0;
   // Uneven pixel art: size the pattern to its blocks, keep single-square details, and start near its own color count.
   let W = 50, H = clamp(Math.round(W * pic.height / pic.width), 5, 150), k = 6;
   const blocky = !found && pixel && pic.width / pixel <= 150 && pic.height / pixel <= 150;
   if (blocky) {
     W = clamp(Math.round(pic.width / pixel), 5, 150); H = clamp(Math.round(pic.height / pixel), 5, 150);
-    k = clamp(estimateColors(pic, W, H), 2, 16);   // faithful first; she can slide down
+    k = clamp(estimateColors(pic, W, H), 2, MAX_COLORS);
   }
   draft = { pic, px, found, g: found && { ...found }, mode: found ? "chart" : "photo", blocky,
+    chartColors, kChart: clamp(chartColors, 2, MAX_COLORS),
     name: "", W, H, k, zoom: 1, cx: pic.width / 2, cy: pic.height / 2, tidy: !blocky,
     border: 0, borderCode: "A", names: [], view: "pattern", result: null };
   go("#new");
 }
 
-// Roughly how many yarn colors a picture really has at this size (shades closer than a small step count as one).
+// Roughly how many yarn colors a picture really has at this size (same-looking shades count as one).
 function estimateColors(pic, W, H) {
   const c = document.createElement("canvas"); c.width = W * SS; c.height = H * SS;
   const ctx = c.getContext("2d", { willReadFrequently: true }); ctx.imageSmoothingQuality = "high";
   ctx.drawImage(pic, 0, 0, c.width, c.height);
-  const { labels, palette } = groupColors(cellColors(ctx.getImageData(0, 0, c.width, c.height).data, W, H, SS, true), 0.08);
+  const { labels, palette } = mergeDown(cellColors(ctx.getImageData(0, 0, c.width, c.height).data, W, H, SS, true), Infinity);
   const counts = palette.map(() => 0); labels.forEach(l => counts[l]++);
   return counts.filter(n => n >= Math.max(2, W * H * 0.002)).length;   // ignore stray in-between shades
 }
@@ -643,8 +647,7 @@ function cropRect(d) {
 function computeDraft(d) {
   let g;
   if (d.mode === "chart") {
-    g = readChart(d.px, d.pic.width, d.g);
-    if (d.foundColors === undefined) d.foundColors = g.colors.length;
+    g = readChart(d.px, d.pic.width, d.g, d.kChart);
   }
   else {
     const r = cropRect(d), c = document.createElement("canvas");
@@ -713,6 +716,9 @@ function renderNew() {
       <div><label class="field-label" for="dName">Name</label>
         <input id="dName" class="text-input" value="${esc(d.name)}" placeholder="My pattern" maxlength="60" enterkeyhint="done"></div>
       ${chart ? `<p class="small muted" id="dSize" style="margin:0"></p>
+      ${d.chartColors > 2 ? `<div><label class="field-label" for="dKc">Colors: up to <span id="dKcv">${d.kChart}</span></label>
+        <input id="dKc" type="range" min="2" max="${clamp(d.chartColors, 2, MAX_COLORS)}" step="1" value="${d.kChart}"></div>` : ""}
+      ${d.chartColors > MAX_COLORS ? `<p class="small muted" style="margin:-6px 0 0">This chart has ${d.chartColors} colors, so the closest ones are combined to keep it to ${MAX_COLORS}.</p>` : ""}
       <details class="adjust"><summary><b>Grid doesn't line up?</b></summary>
         <div class="adjust-grid">
           <span>Columns</span>${step("cols-", "−", "Fewer columns")}<b id="dCols">${d.g.cols}</b>${step("cols+", "+", "More columns")}
@@ -732,8 +738,8 @@ function renderNew() {
       <p class="small muted" id="dSize" style="margin:-4px 0 0"></p>
       <div><label class="field-label" for="dZoom">Zoom</label>
         <input id="dZoom" type="range" min="1" max="4" step="0.01" value="${d.zoom}"></div>
-      <div><label class="field-label" for="dK">Colors: <span id="dKv">${d.k}</span></label>
-        <input id="dK" type="range" min="2" max="16" step="1" value="${d.k}"></div>
+      <div><label class="field-label" for="dK">Colors: up to <span id="dKv">${d.k}</span></label>
+        <input id="dK" type="range" min="2" max="${MAX_COLORS}" step="1" value="${d.k}"></div>
       <label class="check"><input type="checkbox" id="dTidy" ${d.tidy ? "checked" : ""}><span>Tidy up stray single squares</span></label>`}
       <div><div class="field-label">Border</div>
         <div class="seg" role="group" aria-label="Border width">${[0, 1, 2, 3].map(n =>
@@ -777,6 +783,7 @@ function renderNew() {
   };
 
   if (chart) {
+    if ($("dKc")) $("dKc").oninput = e => { d.kChart = +e.target.value; $("dKcv").textContent = d.kChart; update(true); };
     app.querySelectorAll("[data-adj]").forEach(b => b.onclick = () => {
       if (!adjustGrid(d, b.dataset.adj)) return;
       $("dCols").textContent = d.g.cols; $("dRows").textContent = d.g.rows;
@@ -855,8 +862,9 @@ function drawDraft() {
   const counts = {}; p.grid.join("").split("").forEach(k => counts[k] = (counts[k] || 0) + 1);
   document.getElementById("dSize").textContent = d.mode === "chart"
     ? `${W} × ${H} squares${d.border ? " with the border" : ""}, ${p.colors.length} colors.` +
-      (p.colors.length > d.foundColors * 1.5 + 2 ? " That's a lot more colors than before, which usually means the grid is off." : "")
-    : `${W} × ${H} squares${d.border ? " with the border" : ""}. In C2C with 1 in blocks, about ${W} × ${H} in.`;
+      (d.result.distinct > d.chartColors * 1.5 + 2 ? " The grid is picking up a lot more colors than before, which usually means it's off." : "")
+    : `${W} × ${H} squares${d.border ? " with the border" : ""}. In C2C with 1 in blocks, about ${W} × ${H} in.` +
+      (d.result.colors.length < d.k ? ` Shades that look the same were combined, so it's ${d.result.colors.length} colors.` : "");
   const list = document.getElementById("dColors");
   if (!list.contains(document.activeElement)) list.innerHTML = p.colors.map((c, i) => `
     <div class="key-row"><span class="sw" style="background:${c.hex}"></span><span class="code">${c.code}</span>

@@ -110,39 +110,58 @@ function colorName(hex) {
   return name[0].toUpperCase() + name.slice(1);
 }
 
-// For blocky pictures: start from the picture's own distinct colors, then keep merging the two closest
-// until k are left (the cheapest merge by Ward's rule). Unlike k-means, a small but clearly different color
-// (an eye, a badge) survives, while specks of a few squares get absorbed first.
-function mergeDown(rgbs, k) {
-  const g = groupColors(rgbs, 0.05);
-  let groups = g.palette.map((c, i) => c && { lab: toLab(c), n: 0, ids: [i] }).filter(Boolean);
-  const idx = {}; g.palette.forEach((c, i) => { if (c) idx[i] = groups.findIndex(x => x.ids[0] === i); });
-  g.labels.forEach(l => groups[idx[l]].n++);
+// Two colors that would look like the same yarn: very close, or both dark and fairly close
+// (dark shades are hard to tell apart). Monster Duo's closest real pair is 0.088 apart, so 0.075 keeps it intact.
+const CLOSE = 0.075, CLOSE_DARK = 0.11;
+function sameYarn(a, b) { const d = Math.sqrt(labDist2(a, b)); return d < CLOSE || (a[0] < 0.4 && b[0] < 0.4 && d < CLOSE_DARK); }
+
+// Turn starting color groups into the final yarns: first combine every pair that would look like the same yarn,
+// then, if there are still more than k, keep merging the cheapest pair by Ward's rule (closeness weighted by size),
+// so specks of a few squares are absorbed first and a small but clearly different color (an eye, a badge) survives.
+// init: { labels, palette } to start from; default: the picture's own distinct colors.
+// Returns { labels, palette, distinct: how many yarns before the k limit }.
+function mergeDown(rgbs, k, init) {
+  const g = init || groupColors(rgbs, 0.05);
+  const slot = {};
+  let groups = [];
+  g.palette.forEach((c, i) => { if (c) { slot[i] = groups.length; groups.push({ lab: toLab(c), n: 0, ids: [i] }); } });
+  g.labels.forEach(l => groups[slot[l]].n++);
   groups = groups.filter(x => x.n);
-  while (groups.length > k) {
-    let a = 0, b = 1, best = Infinity;
-    for (let i = 0; i < groups.length; i++) for (let j = i + 1; j < groups.length; j++) {
-      // Ward: closeness weighted by size, so specks of a few squares are absorbed before real colors merge.
-      const A = groups[i], B = groups[j], d = labDist2(A.lab, B.lab) * A.n * B.n / (A.n + B.n);
-      if (d < best) { best = d; a = i; b = j; }
-    }
+  const join = (a, b) => {
     const A = groups[a], B = groups[b], n = A.n + B.n;
     A.lab = A.lab.map((v, t) => (v * A.n + B.lab[t] * B.n) / n); A.n = n; A.ids.push(...B.ids);
     groups.splice(b, 1);
+  };
+  const cheapest = cost => {
+    let a = -1, b = -1, best = Infinity;
+    for (let i = 0; i < groups.length; i++) for (let j = i + 1; j < groups.length; j++) {
+      const c = cost(groups[i], groups[j]); if (c < best) { best = c; a = i; b = j; }
+    }
+    return [a, b, best];
+  };
+  for (;;) {                                   // 1. same-looking yarns become one, closest first
+    const [a, b, d] = cheapest((A, B) => sameYarn(A.lab, B.lab) ? labDist2(A.lab, B.lab) : Infinity);
+    if (d === Infinity) break;
+    join(a, b);
+  }
+  const distinct = groups.length;
+  while (groups.length > k) {                  // 2. down to k by Ward's rule
+    const [a, b] = cheapest((A, B) => labDist2(A.lab, B.lab) * A.n * B.n / (A.n + B.n));
+    join(a, b);
   }
   const of = {}; groups.forEach((x, gi) => x.ids.forEach(i => of[i] = gi));
   const labels = g.labels.map(l => of[l]);
   const sums = groups.map(() => [0, 0, 0, 0]);
   rgbs.forEach((c, j) => { const s = sums[labels[j]]; s[0] += c[0]; s[1] += c[1]; s[2] += c[2]; s[3]++; });
-  return { labels, palette: sums.map(s => s[3] ? [s[0] / s[3], s[1] / s[3], s[2] / s[3]] : null) };
+  return { labels, palette: sums.map(s => s[3] ? [s[0] / s[3], s[1] / s[3], s[2] / s[3]] : null), distinct };
 }
 
 // Everything together: square colors -> a pattern grid with lettered colors, most-used color first.
 // Returns { grid: [strings, top row first], colors: [{code, name, hex, count}] }.
 function makeGrid(rgbs, W, H, k, opts = {}) {
-  let { labels, palette } = opts.blocky ? mergeDown(rgbs, k) : quantize(rgbs, k);
+  let { labels, palette, distinct } = mergeDown(rgbs, k, opts.blocky ? undefined : quantize(rgbs, k));
   if (opts.tidy) labels = tidy(labels, W, H);
-  return letterGrid(labels, palette, W, H);
+  return { ...letterGrid(labels, palette, W, H), distinct };
 }
 
 // Color index per square + palette -> lettered grid and named colors, most-used color first.
@@ -358,9 +377,10 @@ function groupColors(rgbs, T = 0.05) {
 }
 
 // A chart picture + its grid -> pattern grid and named colors.
-function readChart(px, w, g) {
-  const { labels, palette } = groupColors(chartCells(px, w, g));
-  return letterGrid(labels, palette, g.cols, g.rows);
+// k: at most this many yarns (the closest are combined); same-looking shades are always combined.
+function readChart(px, w, g, k = Infinity) {
+  const { labels, palette, distinct } = mergeDown(chartCells(px, w, g), k);
+  return { ...letterGrid(labels, palette, g.cols, g.rows), distinct };
 }
 
 // Put a border of one color around a grid.
@@ -370,5 +390,5 @@ function addBorder(grid, size, code) {
   return [...Array(size).fill(full), ...grid.map(r => edge + r + edge), ...Array(size).fill(full)];
 }
 
-if (typeof module !== "undefined") module.exports = { cellColors, toLab, labDist2, toHex, quantize, mergeDown, tidy, colorName, makeGrid, letterGrid,
+if (typeof module !== "undefined") module.exports = { cellColors, toLab, labDist2, toHex, quantize, mergeDown, sameYarn, tidy, colorName, makeGrid, letterGrid,
   edgeProfiles, lineComb, fitLines, detectGrid, analyzePicture, chartCells, groupColors, readChart, addBorder };
