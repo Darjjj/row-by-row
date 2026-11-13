@@ -272,6 +272,30 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       await page.evaluate(() => { window.syncState = window._ss; delete window.syncFlush; delete window.syncUpload; draft = null; });
     }
 
+    // Ready-made patterns: the gallery opens from home, a design opens bigger, adding copies it into her patterns.
+    {
+      await page.goto(URL + "#home", { waitUntil: "load" }); await page.waitForSelector('[data-go="#library"]');
+      await page.click('[data-go="#library"]'); await page.waitForSelector(".lib-card");
+      const lib = await page.evaluate(() => ({ cards: document.querySelectorAll(".lib-card").length, total: LIBRARY.length,
+        drawn: [...document.querySelectorAll("[data-lib]")].every(c => c.width > 0), scrollW: document.documentElement.scrollWidth,
+        ok: LIBRARY.every(it => it.colors.length >= 6 && it.colors.length <= 10 && it.grid.every(r => r.length === it.grid[0].length)) }));
+      ok(lib.cards === lib.total && lib.drawn && lib.scrollW <= 375, `the gallery shows all ${lib.total} designs with pictures, no sideways scrolling`);
+      ok(lib.ok, "every ready-made design has 6 to 10 colors and even rows");
+      await page.screenshot({ path: OUT + "library.png", fullPage: true }); await wait(400);
+      const first = await page.evaluate(() => LIBRARY[0].id);
+      await page.click(`[data-go="#library/${first}"]`); await page.waitForSelector("#libAdd");
+      await page.screenshot({ path: OUT + "library-item.png", fullPage: true }); await wait(400);
+      await page.click("#libAdd"); await page.waitForFunction(id => location.hash === "#pattern/" + id, {}, first);
+      ok(await page.evaluate(id => !!data.patterns[id] && data.patterns[id].grid.length === LIBRARY[0].grid.length && !!document.querySelector('[data-go="#work/' + id + '"]'), first),
+        "adding a design copies it into her patterns and opens it");
+      await page.goto(URL + "#library/" + first, { waitUntil: "load" }); await page.waitForSelector(".tip");
+      ok(/already in your patterns/.test(await page.evaluate(() => document.body.innerText)) && !!(await page.$(`[data-go="#pattern/${first}"]`)), "an added design offers Open my copy");
+      await page.goto(URL + "#library", { waitUntil: "load" }); await page.waitForSelector(".lib-card");
+      ok(/✓ Added/.test(await page.evaluate(() => document.querySelector(".lib-card").innerText)), "the gallery marks it as added");
+      await page.goto(URL + "#home", { waitUntil: "load" });
+      ok(await page.evaluate(n => [...document.querySelectorAll(".pattern-card b")].some(b => b.textContent === n), await page.evaluate(() => LIBRARY[0].name)), "it shows on the home screen with her patterns");
+    }
+
     // Chart pattern from a link (a pattern request coming back): add it, it opens, and the link again offers to update.
     {
       const P = await page.evaluate(() => BUILTIN_PATTERNS[0]);
@@ -387,7 +411,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     await page.reload({ waitUntil: "load" }); await wait(500);
     const cached = await page.evaluate(async () => { const k = await caches.keys(); const c = await caches.open(k.find(x => x.startsWith("rbr-")));
       return { name: k.join(","), files: (await c.keys()).length, controlled: !!navigator.serviceWorker.controller }; });
-    ok(cached.controlled && cached.files >= 13, `service worker controls the page and cached ${cached.files} files (${cached.name})`);
+    ok(cached.controlled && cached.files >= 15, `service worker controls the page and cached ${cached.files} files (${cached.name})`);
     await page.setOfflineMode(true);
     await page.reload({ waitUntil: "load" }); await wait(300);
     ok(/Monster Duo/.test(await page.evaluate(() => document.body.innerText)), "the app opens offline from the cache");

@@ -166,6 +166,7 @@ function render() {
   if (view === "new" && draft) lastPlace = { view };
   if (view === "feedback") return renderFeedback();
   if (view === "backup") return renderBackup();
+  if (view === "library" && typeof LIBRARY !== "undefined") { const it = id && libFind(id); return it ? renderLibraryItem(it) : renderLibrary(); }
   if (view === "import" && id) return renderImport(id);
   const proj = (view === "project" || view === "piece") && findProject(id);
   if (proj) {
@@ -200,6 +201,7 @@ function renderHome() {
     }).join("")}
     <button class="btn quiet" data-act="new-picture">＋ New pattern from a chart or pixel art</button>
     <input type="file" id="picFile" accept="image/*" hidden>
+    ${libraryCardHtml()}
     ${syncCardHtml()}
     ${backupCardHtml()}
     <button class="card pattern-card" data-go="#feedback" style="grid-template-columns:48px minmax(0,1fr)">
