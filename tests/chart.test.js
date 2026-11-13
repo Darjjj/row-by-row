@@ -79,6 +79,30 @@ for (const [label, cell, opts] of [["lines, 13.7 px squares, margins", 13.7, { l
   ok(!a.grid && a.pixel && Math.abs(w / a.pixel - 51) <= 6, `uneven pixel art: not a chart, sized ${a.pixel ? Math.round(w / a.pixel) + " x " + Math.round(h / a.pixel) : "-"} (drawn 51 x 60)`);
 }
 
+// AI "chart on graph paper": the picture's blocks are the paper's size but sit about half a square out of line,
+// with the paper's lines showing through. The grid must cover the whole drawing (it once found only a blank strip
+// of paper beside it), and squares straddling two blocks take one block's color, not a muddy mix.
+{
+  const cell = 20, PW = 60, PH = 72, w = PW * cell, h = PH * cell, px = new Uint8ClampedArray(w * h * 4);
+  const hex = {}; P.colors.forEach(c => hex[c.code] = [1, 3, 5].map(i => parseInt(c.hex.slice(i, i + 2), 16)));
+  const ox = 4 * cell + 10, oy = 6 * cell + 9;   // where the drawing starts: 4 and 6 squares in, plus about half a square
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4, cx = Math.floor((x - ox) / cell), cy = Math.floor((y - oy) / cell);
+    const inside = x >= ox && y >= oy && cx < 51 && cy < 60;
+    let col = inside ? hex[P.grid[cy][cx]] : [232, 232, 232];
+    if (x % cell === 0 || y % cell === 0) col = col.map(v => v * (inside ? 0.85 : 0.6));   // the paper's lines, faint through the drawing
+    px[i] = col[0]; px[i + 1] = col[1]; px[i + 2] = col[2]; px[i + 3] = 255;
+  }
+  const g = detectGrid(px, w, h);
+  ok(g && g.x0 <= ox && g.y0 <= oy && g.x1 >= ox + 51 * cell && g.y1 >= oy + 60 * cell && Math.abs((g.x1 - g.x0) / g.cols - cell) < 0.5,
+    `a drawing out of line with its graph paper: the grid covers all of it (${g ? g.cols + " x " + g.rows : "not found"})`);
+  if (g) {
+    const cells = vm.runInContext("chartCells", ctx)(px, w, g), pal = Object.values(hex).concat([[232, 232, 232]]);
+    const off = cells.filter(c => Math.min(...pal.map(p => Math.abs(p[0] - c[0]) + Math.abs(p[1] - c[1]) + Math.abs(p[2] - c[2]))) > 30).length;
+    ok(off / cells.length < 0.005, `squares across two blocks take one block's color (${off} of ${cells.length} are mixes)`);
+  }
+}
+
 // Not a chart: smooth shapes and noise, like a photo.
 {
   const w = 800, h = 600, px = new Uint8ClampedArray(w * h * 4);

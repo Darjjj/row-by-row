@@ -181,16 +181,26 @@ function lineComb(prof) {
     const mid = Math.min(M[k] ?? Infinity, M[k - 1] ?? Infinity);   // the quieter side: the inside of the grid
     return t > 1.8 * mid && t > floor ? 2 : t <= floor && mid <= floor ? 1 : 0;
   });
-  // The grid: the longest run of lines, allowing short stretches of nothing (or one odd tooth) inside.
-  let span = null, first = -1, last = -1, empty = 0, odd = 0;
-  const close = () => { if (first >= 0 && (!span || last - first > span[1] - span[0])) span = [first, last]; first = -1; };
+  // Runs of lines, allowing short stretches of nothing (or one odd tooth) inside.
+  const runs = [];
+  let first = -1, last = -1, empty = 0, odd = 0;
+  const close = () => { if (first >= 0) runs.push([first, last]); first = -1; };
   state.forEach((v, k) => {
     if (v === 2) { if (first < 0) first = k; last = k; empty = odd = 0; }
     else if (first >= 0 && (v === 1 ? ++empty > 8 : ++odd > 1)) { close(); empty = odd = 0; }
   });
   close();
-  if (!span || span[1] - span[0] < 4) return null;
-  return { s, at, p, pos, state, span };
+  const len = r => r[1] - r[0], longest = rs => rs.reduce((s, r) => !s || len(r) > len(s) ? r : s, null);
+  const span = longest(runs);
+  if (!span || len(span) < 4) return null;
+  // The same lines on both sides of a stretch where the picture covers them (AI charts often draw the picture
+  // over graph paper, a little out of line with it): the grid runs underneath. Used only if lines are drawn.
+  const joinedRuns = runs.map(r => r.slice());
+  for (let i = 0; i + 1 < joinedRuns.length; i++) {
+    const a = joinedRuns[i], b = joinedRuns[i + 1];
+    if (Math.max(len(a), len(b)) >= 4 && b[0] - a[1] <= len(a) + len(b) + 2) { joinedRuns.splice(i, 2, [a[0], b[1]]); i = Math.max(-1, i - 2); }
+  }
+  return { s, at, p, pos, state, span, joined: longest(joinedRuns) };
 }
 
 // Exact line positions: a straight-line fit through the real peak of each line in the span.
@@ -245,6 +255,7 @@ function analyze(px, w, h) {
       : thin(g(x + d, y), g(x + d - o, y), g(x + d + o, y)));
     return best;
   };
+  const len = r => r[1] - r[0];
   const linesOf = c => c.pos.filter((_, k) => k >= c.span[0] && k <= c.span[1] && c.state[k] === 2);
   function trim(c, other, across) {
     const lines = linesOf(other), half = other.p / 2;
@@ -275,7 +286,12 @@ function analyze(px, w, h) {
     if (kR > 0 && Math.abs(n - end - kR * f.size) < 0.3 * f.size) f.count += kR;
   };
   const Xspan = X.span.slice(), Yspan = Y.span.slice();
-  const drawn = trim(X, { ...Y, span: Yspan }, true) & trim(Y, { ...X, span: Xspan }, false);
+  let drawn = trim(X, { ...Y, span: Yspan }, true) & trim(Y, { ...X, span: Xspan }, false);
+  if (drawn && (len(X.joined) > len(Xspan) || len(Y.joined) > len(Yspan))) {   // drawn lines that run under the picture
+    X.span = X.joined.slice(); Y.span = Y.joined.slice();
+    const Xj = X.span.slice(), Yj = Y.span.slice();
+    drawn = trim(X, { ...Y, span: Yj }, true) & trim(Y, { ...X, span: Xj }, false);
+  }
   const fx = fitLines(X), fy = fitLines(Y);
   if (!drawn) {
     // Without drawn lines, the even squares have to cover most of the picture. If they don't, the blocks
@@ -296,15 +312,37 @@ const clampI = (v, n) => v < 0 ? 0 : v >= n ? n - 1 : v;
 function chartCells(px, w, g) {
   const cw = (g.x1 - g.x0) / g.cols, ch = (g.y1 - g.y0) / g.rows, out = [];
   const mx = cw >= 4 ? Math.max(1, cw * 0.25) : 0, my = ch >= 4 ? Math.max(1, ch * 0.25) : 0, med = a => a.sort((p, q) => p - q)[a.length >> 1];
+  let R = new Float32Array(0), G = R, B = R;
+  const bins = new Int32Array(512), sums = new Float64Array(512 * 3);
   for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
     const xa = Math.round(g.x0 + c * cw + mx), xb = Math.max(xa + 1, Math.round(g.x0 + (c + 1) * cw - mx));
     const ya = Math.round(g.y0 + r * ch + my), yb = Math.max(ya + 1, Math.round(g.y0 + (r + 1) * ch - my));
-    const R = [], G = [], B = [];
-    for (let y = ya; y < yb; y++) for (let x = xa; x < xb; x++) {
+    let n = 0, lo = [255, 255, 255], hi = [0, 0, 0];
+    if (R.length < (xb - xa) * (yb - ya)) R = new Float32Array((xb - xa) * (yb - ya)), G = new Float32Array(R.length), B = new Float32Array(R.length);
+    for (let y = ya; y < yb; y++) for (let x = xa; x < xb; x++, n++) {
       const i = (y * w + x) * 4, a = px[i + 3] / 255, wh = 255 * (1 - a);
-      R.push(px[i] * a + wh); G.push(px[i + 1] * a + wh); B.push(px[i + 2] * a + wh);
+      R[n] = px[i] * a + wh; G[n] = px[i + 1] * a + wh; B[n] = px[i + 2] * a + wh;
+      if (R[n] < lo[0]) lo[0] = R[n]; if (R[n] > hi[0]) hi[0] = R[n]; if (G[n] < lo[1]) lo[1] = G[n]; if (G[n] > hi[1]) hi[1] = G[n];
+      if (B[n] < lo[2]) lo[2] = B[n]; if (B[n] > hi[2]) hi[2] = B[n];
     }
-    out.push([med(R), med(G), med(B)]);
+    if (hi[0] - lo[0] + hi[1] - lo[1] + hi[2] - lo[2] < 60) {   // all one color (most squares): its middle
+      out.push([med(Array.from(R.subarray(0, n))), med(Array.from(G.subarray(0, n))), med(Array.from(B.subarray(0, n)))]); continue;
+    }
+    // The square's main color: the middle of the biggest group of alike points. Where the picture's blocks sit a
+    // little out of line with the grid, a square that is mostly green and partly black comes out green, not muddy.
+    // Coarse color bins: the fullest one is the main color; then every point close to it, wherever the bin edges fell.
+    const RR = R, GG = G, BB = B, used = [];
+    let top = -1;
+    for (let q = 0; q < n; q++) {
+      const key = ((RR[q] >> 5) << 6) | ((GG[q] >> 5) << 3) | (BB[q] >> 5);
+      if (!bins[key]) used.push(key);
+      bins[key]++; sums[key * 3] += RR[q]; sums[key * 3 + 1] += GG[q]; sums[key * 3 + 2] += BB[q];
+      if (top < 0 || bins[key] > bins[top]) top = key;
+    }
+    const sr = sums[top * 3] / bins[top], sg = sums[top * 3 + 1] / bins[top], sb = sums[top * 3 + 2] / bins[top], gr = [], gg = [], gb = [];
+    for (const key of used) { bins[key] = 0; sums[key * 3] = sums[key * 3 + 1] = sums[key * 3 + 2] = 0; }
+    for (let q = 0; q < n; q++) if (Math.abs(sr - RR[q]) + Math.abs(sg - GG[q]) + Math.abs(sb - BB[q]) < 60) { gr.push(RR[q]); gg.push(GG[q]); gb.push(BB[q]); }
+    out.push([med(gr), med(gg), med(gb)]);
   }
   return out;
 }
