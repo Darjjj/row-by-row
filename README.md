@@ -9,12 +9,14 @@ A phone app for following pixel crochet patterns one row at a time. It's a plain
 - Written patterns made of pieces (like amigurumi projects): a project page with each piece's count, and a round-by-round follower with stitch counts. Added through private import links (`tools/make_import_link.py`)
 - Fix squares and colors on her own patterns: paint or fill squares, combine two colors, change a shade, rename yarns, add a color (up to 10), undo
 - Sign in with Google to sync patterns, progress and notes between devices
+- Backup: save one file (to Drive or email through the share menu, or Downloads) and restore it later. Restoring only adds: it brings back missing or deleted patterns and moves her place forward, never back
 - Notes and ideas: signed in, Send delivers them to a feedback inbox (`tools/read_feedback.py` reads it with a read-only key); signed out, the phone's share menu
 
 ## Tests
 - `node tests/sync.test.js` (or `bun`): sync merge rules, including a behind phone never wiping progress
 - `node tests/picture.test.js`: Monster Duo drawn as pixel art must come back square for square; the grid self-check corrects a broken grid
 - `node tests/chart.test.js`: the real Monster Duo chart image (export it first with `python tests/export-chart.py`), synthetic charts, pixel art, and a photo that must not be taken for a chart
+- `node tests/backup.test.js`: a backup brings everything back, an old one never rolls anything back, broken or tampered files are refused or trimmed
 - `node tests/written.test.js`: round expansion, stitch-count rules, import checks; re-checks every count in her pattern if `patterns-draft/` has it
 - `tests/phone-check.js <chart.jpg> <photo.jpg> [transparent.png] [uneven.png] [written.json]`: headless Chrome at 375 px, light and dark, plus failed saves, renames during redraws, offline via the service worker; make the last two images with `python tests/make-test-images.py <folder>`. Needs `puppeteer-core`, Chrome, and the local server running
 
@@ -22,6 +24,7 @@ A phone app for following pixel crochet patterns one row at a time. It's a plain
 - `pattern.js` turns a color grid into rows or C2C diagonals, and `verifySteps` rebuilds the chart from them as a check
 - `builtin.js` holds the built-in pattern(s)
 - `picture.js` finds a chart's grid (or pixel art's block size), checks and corrects it, reads each square, and combines colors (OKLab)
+- `backup.js` is backup and restore (the file format, its checks, and the merge that only adds)
 - `written.js` is written patterns: projects, pieces, the round follower, import links
 - `app.js` / `style.css` are the screens
 - `sw.js` keeps the files for offline use. **Bump `VERSION` in `sw.js` whenever you change a file.**

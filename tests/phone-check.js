@@ -172,6 +172,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     ok(sentNote && sentNote.via === "inbox" && sentNote.from === "tester@example.com" && sentNote.device && sentNote.sent && sentNote.t,
       `${scheme}: inbox note saved with via, from, device, and a sync stamp`);
     await page.screenshot({ path: OUT + `feedback-sent-${scheme}.png`, fullPage: true });
+    await page.goto(URL + "#backup", { waitUntil: "load" }); await page.waitForSelector('[data-bact="download"]'); await wait(300);
+    await page.screenshot({ path: OUT + `backup-${scheme}.png`, fullPage: true });
     ok(errors.length === 0, `${scheme}: no page errors ${errors.join(" | ")}`);
     await page.close();
   }
@@ -273,13 +275,55 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       ok(/didn't open/.test(await page.evaluate(() => document.body.innerText)), "a broken link explains itself");
     }
 
+    // Backup: save a file, wipe the phone, restore it, and everything is back. Restoring again changes nothing.
+    {
+      const fs = require("fs"), dl = OUT + "downloads/";
+      fs.rmSync(dl, { recursive: true, force: true }); fs.mkdirSync(dl, { recursive: true });
+      const cdp = await browser.target().createCDPSession();
+      await cdp.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: dl.replace(/\//g, "\\") });
+      const state = () => page.evaluate(() => { const d = JSON.parse(localStorage.getItem("rowbyrow.v1") || "{}");
+        return { pats: Object.values(d.patterns || {}).filter(p => !p.deleted).length, duo: (d.progress || {})["monster-duo|rows|right"], notes: (d.notes || []).filter(n => !n.deleted).length }; });
+      await page.goto(URL + "#home", { waitUntil: "load" });
+      const before = await state();
+      await page.goto(URL + "#backup", { waitUntil: "load" }); await page.waitForSelector('[data-bact="download"]');
+      const canShare = await page.evaluate(() => canShareBackup());
+      ok(!!(await page.$('[data-bact="share"]')) === canShare, `Send to Drive or email is offered only where the phone can share files (${canShare ? "can" : "can't"} here)`);
+      await page.click('[data-bact="download"]');
+      let file = null;
+      for (let i = 0; i < 50 && !file; i++) { await wait(100); file = fs.readdirSync(dl).find(f => /^row-by-row-backup-\d{4}-\d\d-\d\d\.json$/.test(f)); }
+      ok(!!file && /Backup saved/.test(await page.evaluate(() => document.body.innerText)), `a backup file is downloaded (${file})`);
+      await page.goto(URL + "#home", { waitUntil: "load" });
+      ok(/Last saved/.test(await page.evaluate(() => document.body.innerText)), "the home screen shows when the last backup was saved");
+      await page.evaluate(() => localStorage.removeItem("rowbyrow.v1"));
+      await page.goto(URL + "#backup", { waitUntil: "load" }); await page.reload({ waitUntil: "load" });
+      const wiped = await state();
+      const restore = async f => {
+        const [chooser] = await Promise.all([page.waitForFileChooser(), page.click('[data-bact="pick"]')]);
+        await chooser.accept([f]); await wait(400);
+      };
+      await restore(dl + file);
+      const confirm = await page.evaluate(() => (document.getElementById("restoreConfirm") || {}).innerText || "");
+      ok(/Restore this backup\?/.test(confirm) && new RegExp(before.pats + " pattern").test(confirm), `restoring asks first and says what's in it (${confirm.split("\n")[1] || ""})`);
+      await page.screenshot({ path: OUT + "backup-confirm.png", fullPage: true }); await wait(400);   // let the resize redraw pass
+      await page.click('[data-bact="restore-yes"]'); await wait(200);
+      const after = await state();
+      ok(wiped.pats === 0 && after.pats === before.pats && after.notes === before.notes && after.duo && after.duo.step === before.duo.step,
+        `a wiped phone gets everything back (${after.pats} patterns, ${after.notes} notes, Monster Duo step ${after.duo && after.duo.step})`);
+      ok(/Restored:/.test(await page.evaluate(() => document.body.innerText)), "it says what was restored");
+      await page.screenshot({ path: OUT + "backup-restored.png", fullPage: true });
+      await restore(dl + file); await page.click('[data-bact="restore-yes"]'); await wait(200);
+      ok(/already here/.test(await page.evaluate(() => document.body.innerText)) && JSON.stringify(await state()) === JSON.stringify(after), "restoring the same file again changes nothing");
+      await restore(CHART);
+      ok(/isn't a Row by Row backup/.test(await page.evaluate(() => document.body.innerText)) && !(await page.$("#restoreConfirm")), "a picture picked by mistake is turned away");
+    }
+
     // Service worker: a full set is cached, and the app opens offline.
     await page.goto(URL + "#home", { waitUntil: "load" });
     await page.evaluate(() => navigator.serviceWorker.ready);
     await page.reload({ waitUntil: "load" }); await wait(500);
     const cached = await page.evaluate(async () => { const k = await caches.keys(); const c = await caches.open(k.find(x => x.startsWith("rbr-")));
       return { name: k.join(","), files: (await c.keys()).length, controlled: !!navigator.serviceWorker.controller }; });
-    ok(cached.controlled && cached.files >= 11, `service worker controls the page and cached ${cached.files} files (${cached.name})`);
+    ok(cached.controlled && cached.files >= 12, `service worker controls the page and cached ${cached.files} files (${cached.name})`);
     await page.setOfflineMode(true);
     await page.reload({ waitUntil: "load" }); await wait(300);
     ok(/Monster Duo/.test(await page.evaluate(() => document.body.innerText)), "the app opens offline from the cache");

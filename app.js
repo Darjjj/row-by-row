@@ -164,6 +164,7 @@ function render() {
   if (view !== "work" && view !== "piece") releaseWakeLock();
   if ((view === "pattern" || view === "work") && p) lastPlace = { view, id };
   if (view === "feedback") return renderFeedback();
+  if (view === "backup") return renderBackup();
   if (view === "import" && id) return renderImport(id);
   const proj = (view === "project" || view === "piece") && findProject(id);
   if (proj) {
@@ -199,6 +200,7 @@ function renderHome() {
     <button class="btn quiet" data-act="new-picture">＋ New pattern from a chart or pixel art</button>
     <input type="file" id="picFile" accept="image/*" hidden>
     ${syncCardHtml()}
+    ${backupCardHtml()}
     <button class="card pattern-card" data-go="#feedback" style="grid-template-columns:48px minmax(0,1fr)">
       <span class="note-icon" aria-hidden="true">${BUBBLE_SVG}</span>
       <span><b>Ideas or problems?</b><span class="muted small">Write a note any time and send it when you're ready.${pendingNotes().length ? ` <b style="display:inline;font-size:1em;color:var(--accent)">${pendingNotes().length} waiting to send.</b>` : ""}</span></span>
