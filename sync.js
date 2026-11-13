@@ -145,18 +145,16 @@
   });
   function stop() { if (unsub) unsub(); unsub = null; docRef = null; remote = null; clearTimeout(pushTimer); clearTimeout(retryTimer); }
 
-  // Send notes to the feedback inbox (Firestore "feedback"; apps can add to it but nobody can read it from the app).
-  // Each note's document id is fixed, so sending again after a timeout never makes a duplicate.
-  // Resolves when the server has them; rejects with code "timeout" if it's taking too long (probably offline).
-  window.syncSendFeedback = notes => {
-    const u = auth && auth.currentUser;
-    if (!u || !db) return Promise.reject({ code: "not-signed-in" });
-    const writes = Promise.all(notes.map(n => db.collection("feedback").doc(`${u.uid}_${n.id}`).set({
-      uid: u.uid, email: u.email || "", text: String(n.text).slice(0, 5000), at: n.at || Date.now(),
-      where: n.where || "", device: navigator.userAgent.slice(0, 300), sent: Date.now()
-    })));
-    return Promise.race([writes, new Promise((_, rej) => setTimeout(() => rej({ code: "timeout" }), 12000))]);
-  };
+  // Resolves once everything changed on this device has reached the cloud; rejects with code "timeout"
+  // if that takes too long (probably offline; sync keeps retrying on its own). Used by the notes inbox:
+  // a note marked via "inbox" is "delivered" once it's in her synced data, where tools/read_feedback.py reads it.
+  window.syncFlush = (ms = 12000) => new Promise((res, rej) => {
+    const stopAll = () => { clearInterval(iv); clearTimeout(to); };
+    const iv = setInterval(() => {
+      if (state.status === "synced" && remote && !toPush(window.RBR.getData(), remote)) { stopAll(); res(); }
+    }, 300);
+    const to = setTimeout(() => { stopAll(); rej({ code: "timeout" }); }, ms);
+  });
 
   window.syncSignIn = async () => {
     if (!auth) return;

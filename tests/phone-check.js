@@ -106,7 +106,18 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     await page.type("#noteText", "Test note"); await page.click('[data-act="send-notes"]'); await wait(200);
     ok(await page.evaluate(() => !document.getElementById("fallback").hidden && /Test note/.test(document.getElementById("fallbackText").value)),
       `${scheme}: no share menu, so the copy-the-text fallback appears`);
-    await page.screenshot({ path: OUT + `feedback-${scheme}.png`, fullPage: true });
+    await page.screenshot({ path: OUT + `feedback-${scheme}.png`, fullPage: true }); await wait(400);
+    // Signed in (sync stood in for): Send marks notes for the inbox, with who and which device, and says Sent.
+    await page.evaluate(() => { window.syncState = () => ({ user: { email: "tester@example.com" }, status: "synced" });
+      window.syncFlush = () => new Promise(r => setTimeout(r, 300)); location.hash = "#home"; location.hash = "#feedback"; });
+    await page.waitForSelector("#noteText");
+    ok(/app's inbox/.test(await page.evaluate(() => document.body.innerText)), `${scheme}: signed in, Send says it goes to the app's inbox`);
+    await page.type("#noteText", "Inbox note"); await page.click('[data-act="send-notes"]');
+    await page.waitForFunction(() => /Sent\. Thank you|notes sent/.test(document.body.innerText), { timeout: 5000 });
+    const sentNote = await page.evaluate(() => JSON.parse(localStorage.getItem("rowbyrow.v1")).notes.find(n => n.text === "Inbox note"));
+    ok(sentNote && sentNote.via === "inbox" && sentNote.from === "tester@example.com" && sentNote.device && sentNote.sent && sentNote.t,
+      `${scheme}: inbox note saved with via, from, device, and a sync stamp`);
+    await page.screenshot({ path: OUT + `feedback-sent-${scheme}.png`, fullPage: true });
     ok(errors.length === 0, `${scheme}: no page errors ${errors.join(" | ")}`);
     await page.close();
   }

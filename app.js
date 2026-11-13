@@ -434,25 +434,25 @@ function composeMessage(list) {
     `${list.length > 1 ? `${i + 1}) ` : ""}${n.text}\n   (${when(n.at)}${n.where ? " · " + n.where : ""})`).join("\n\n");
 }
 
-const signedIn = () => !!(window.syncState && window.syncState().user && window.syncSendFeedback);
+const signedIn = () => !!(window.syncState && window.syncState().user && window.syncFlush);
 
-// Signed in: notes go straight to the feedback inbox. Otherwise (or if she picks Share), the phone's share menu.
+// Signed in: Send marks the notes for the inbox; they travel with her synced data and
+// tools/read_feedback.py picks them up there. Otherwise (or if she picks Share), the phone's share menu.
 async function sendNotes(viaShare) {
   saveDraftAsNote();
   const list = pendingNotes();
   if (!list.length) { feedbackMsg = "Write a note first, then tap Send."; return render(); }
   if (!viaShare && signedIn()) {
+    const from = window.syncState().user.email || "", device = navigator.userAgent.slice(0, 300);
+    list.forEach(n => Object.assign(n, { sent: true, sentAt: Date.now(), via: "inbox", from, device }));
+    save();
     feedbackMsg = "Sending..."; render();
     document.querySelectorAll('[data-act="send-notes"],[data-act="share-notes"]').forEach(b => b.disabled = true);
     try {
-      await window.syncSendFeedback(list);
-      list.forEach(n => { n.sent = true; n.sentAt = Date.now(); n.via = "inbox"; }); save();
+      await window.syncFlush();
       feedbackMsg = list.length === 1 ? "Sent. Thank you!" : `${list.length} notes sent. Thank you!`;
     } catch (e) {
-      feedbackMsg = e && e.code === "timeout"
-        ? "No connection right now. Your notes are saved here. Tap Send again when you're online."
-        : "That didn't go through. Your notes are saved here. Try again in a bit, or tap Share instead.";
-      console.warn("feedback:", e && (e.code || e.message));
+      feedbackMsg = "Saved. It will reach the inbox on its own as soon as you're back online.";
     }
     return render();
   }
