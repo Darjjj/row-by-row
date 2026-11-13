@@ -2,11 +2,12 @@
 
 A phone app for following pixel crochet patterns one row at a time. It's a plain web app (no build step) that installs to an Android home screen and works offline.
 
+- A "pastel craft journal" look made for her: dotted notebook paper, paper cards with washi tape, handwritten notes, and her favorite colors with jobs (purple for buttons, pink for warmth, green for done, blue for tips). Home opens with a Keep going card for the pattern she's on; notebook tabs along the bottom (Patterns, Ready-made, Notes, More); More holds text size, syncing and backup. Fonts live in `fonts/` (SIL OFL) so it works offline
 - Single crochet rows (right- or left-handed) or corner to corner (C2C, bottom right to top left)
 - Crochet mode: big color counts in stitching order, tap colors as you finish them, chart with the current row outlined, screen stays on
 - Progress is saved on the phone, separately for each style
 - New patterns from ready-made charts (grid found, checked and lined up automatically, then read square by square) or pixel art (sized to its blocks), with up to 10 colors, a border and yarn names. Real photos are turned away: they come out as blobs with too many colors
-- Ready-made patterns: a gallery (home > Ready-made patterns) grouped by theme; adding one copies it into her patterns. Designs are made on a local GPU (`tools/pattern_art.py`, ComfyUI + FLUX.2 klein), read with the app's own reader (`tools/art_to_pattern.py`), and collected into `library-data.js` by `tools/build_library.py`; all 6 to 10 colors
+- Ready-made patterns: a gallery (the Ready-made tab) grouped by theme; adding one copies it into her patterns. Designs are made on a local GPU (`tools/pattern_art.py`, ComfyUI + FLUX.2 klein), read with the app's own reader (`tools/art_to_pattern.py`), and collected into `library-data.js` by `tools/build_library.py`; all 6 to 10 colors
 - Pattern requests: in Notes, "Ask for a pattern" starts a note; the pattern comes back as a private import link (`tools/make_import_link.py` also takes chart patterns: kind "chart", id "c-...", 10 colors at most)
 - Written patterns made of pieces (like amigurumi projects): a project page with each piece's count, and a round-by-round follower with stitch counts. Added through private import links (`tools/make_import_link.py`)
 - Fix squares and colors on her own patterns: paint or fill squares, combine two colors, change a shade, rename yarns, add a color (up to 10), undo
@@ -31,7 +32,7 @@ A phone app for following pixel crochet patterns one row at a time. It's a plain
 - `attach.js` is pictures with notes (making them, keeping them until sent, uploading them)
 - `backup.js` is backup and restore (the file format, its checks, and the merge that only adds)
 - `written.js` is written patterns: projects, pieces, the round follower, import links
-- `app.js` / `style.css` are the screens
+- `app.js` / `style.css` are the screens; `style.css` starts with the color and font tokens (light and dark) that every screen uses
 - `sw.js` keeps the files for offline use. **Bump `VERSION` in `sw.js` whenever you change a file.**
 
 ## Run locally
