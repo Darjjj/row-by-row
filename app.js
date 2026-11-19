@@ -131,19 +131,22 @@ function drawChart(canvas, p, opts = {}) {
     ctx.stroke();
   }
   if (steps && cur >= 0 && cur < steps.length) {
-    const s = steps[cur], inset = Math.max(1.5, cell * 0.2);
-    let doneCells = 0; for (let i = 0; i < (opts.inrow || 0); i++) doneCells += s.runs[i].n;
+    const s = steps[cur], inset = Math.max(1.5, cell * 0.2), at = Math.min(opts.inrow || 0, s.runs.length);
+    let doneCells = 0; for (let i = 0; i < at; i++) doneCells += s.runs[i].n;
+    const runEnd = at < s.runs.length ? doneCells + s.runs[at].n : doneCells;   // the color she's on, ringed in pink
     s.cells.forEach(([y, x], i) => {
-      ctx.fillStyle = "#f2b705"; ctx.fillRect(x * cell, y * cell, cell, cell);
+      ctx.fillStyle = i >= doneCells && i < runEnd ? "#e0245e" : "#f2b705"; ctx.fillRect(x * cell, y * cell, cell, cell);
       ctx.fillStyle = cm[p.grid[y][x]].hex; ctx.fillRect(x * cell + inset, y * cell + inset, cell - 2 * inset, cell - 2 * inset);
       if (i < doneCells && cell >= 6) {
         ctx.fillStyle = "rgba(61,138,31,0.9)"; ctx.beginPath();
         ctx.arc(x * cell + cell / 2, y * cell + cell / 2, cell * 0.18, 0, 7); ctx.fill();
       }
     });
-    const [sy, sx] = s.cells[0];
-    ctx.fillStyle = "#e0245e"; ctx.beginPath();
-    ctx.arc(sx * cell + cell / 2, sy * cell + cell / 2, Math.max(2.5, cell * 0.32), 0, 7); ctx.fill();
+    if (doneCells < s.cells.length) {   // her spot: the first stitch of the color she's on
+      const [sy, sx] = s.cells[doneCells];
+      ctx.fillStyle = "#e0245e"; ctx.strokeStyle = "#fff"; ctx.lineWidth = Math.max(1, cell * 0.08); ctx.beginPath();
+      ctx.arc(sx * cell + cell / 2, sy * cell + cell / 2, Math.max(2.5, cell * 0.32), 0, 7); ctx.fill(); if (cell >= 6) ctx.stroke();
+    }
   }
 }
 
@@ -390,10 +393,10 @@ function renderPattern(p) {
     nameBox.addEventListener("keydown", e => { if (e.key === "Enter") nameBox.blur(); });
   }
   const wrap = document.getElementById("chartWrap");
-  drawChart(document.getElementById("chart"), p, { cell: (wrap.clientWidth - 2) / W, steps, step: pr.step, fade: false });
+  drawChart(document.getElementById("chart"), p, { cell: (wrap.clientWidth - 2) / W, steps, step: pr.step, inrow: pr.inrow, fade: false });
 }
 
-let zoomed = false;
+let zoomed = !!data.settings.zoom;   // remembered, so the chart opens the way she left it
 function renderWork(p) {
   const steps = stepsFor(p), pr = progressFor(p), pf = prefsFor(p), cm = colorMap(p);
   const W = p.grid[0].length;
@@ -446,7 +449,7 @@ function renderWork(p) {
       <div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0;flex:1">Where you are</h2>
         <button class="pill" data-act="zoom">${zoomed ? "Zoom out" : "Zoom in"}</button></div>
       <div class="chart-wrap window" id="chartWrap"><canvas id="chart" aria-label="Chart with this row highlighted"></canvas></div>
-      <p class="small muted" style="margin:0">This row is outlined in yellow. The pink dot is where it starts.</p>
+      <p class="small muted" style="margin:0">${inrow >= s.runs.length ? "This row is outlined in yellow. All its colors are done." : inrow ? "The pink dot is your spot: the first stitch of the color you're on, outlined in pink." : "This row is outlined in yellow. The pink dot is where it starts."}</p>
     </div>
     <div class="card"><div class="key">${[...new Set(s.runs.map(r => r.k))].map(k => `
       <div class="key-row"><span class="sw" style="background:${cm[k].hex}"></span><span class="code">${esc(k)}</span><span>${esc(cm[k].name)}</span><span></span></div>`).join("")}</div></div>
@@ -458,10 +461,10 @@ function renderWork(p) {
   const wrap = document.getElementById("chartWrap");
   const cell = zoomed ? 16 : (wrap.clientWidth - 2) / W;
   drawChart(document.getElementById("chart"), p, { cell, steps, step: pr.step, inrow });
-  {   // a window on her row: scroll it into the middle (zoomed or not)
-    const ys = s.cells.map(c => c[0]), xs = s.cells.map(c => c[1]);
-    const cy = (Math.min(...ys) + Math.max(...ys) + 1) / 2 * cell, cx = (Math.min(...xs) + Math.max(...xs) + 1) / 2 * cell;
-    wrap.scrollTop = cy - wrap.clientHeight / 2; wrap.scrollLeft = cx - wrap.clientWidth / 2;
+  {   // a window on her spot (the start of the color she's on): scroll it into the middle, zoomed or not
+    let at = 0; for (let i = 0; i < inrow; i++) at += s.runs[i].n;
+    const [y, x] = s.cells[Math.min(at, s.cells.length - 1)];
+    wrap.scrollTop = (y + .5) * cell - wrap.clientHeight / 2; wrap.scrollLeft = (x + .5) * cell - wrap.clientWidth / 2;
   }
 }
 
@@ -698,7 +701,7 @@ app.addEventListener("click", e => {
   }
   const act = t.dataset.act, pr = p && progressFor(p);
   if (act === "scale") return cycleScale();
-  if (act === "zoom") { zoomed = !zoomed; return render(); }
+  if (act === "zoom") { zoomed = data.settings.zoom = !zoomed; save(); return render(); }
   if (act === "next") { moveTo(pr, pr.step + 1, 0); save(); render(); if (Math.random() < 1 / 30) loveToast(); return scrollTo(0, 0); }
   if (act === "prev") { moveTo(pr, Math.max(0, pr.step - 1), 0); save(); render(); return scrollTo(0, 0); }
   if (act === "reset-ask") { document.getElementById("resetConfirm").hidden = false; t.hidden = true; return; }
