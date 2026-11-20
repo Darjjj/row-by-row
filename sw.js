@@ -1,5 +1,5 @@
 // Offline support: keep the app files on the phone. Bump VERSION when any file changes.
-const VERSION = "rbr-v26";
+const VERSION = "rbr-v27";
 const FILES = ["./", "index.html", "style.css", "app.js", "pattern.js", "picture.js", "written.js", "backup.js", "attach.js", "library-data.js", "library.js", "builtin.js", "sync.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png",
   "fonts/atkinson-hyperlegible-400.woff2", "fonts/atkinson-hyperlegible-700.woff2", "fonts/baloo-2-500-800.woff2", "fonts/caveat-600-700.woff2"];

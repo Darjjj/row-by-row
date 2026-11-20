@@ -443,7 +443,7 @@ function renderWork(p) {
         return `<button class="chip ${i < inrow ? "done" : ""} ${i === inrow ? "next" : ""}" data-chip="${i}" role="listitem"
           style="background:${c.hex};color:${textOn(c.hex)}" aria-label="${r.n} ${esc(c.name)}${i < inrow ? ", done" : ""}">${r.n} ${esc(r.k)}</button>`;
       }).join("")}</div>
-      <p class="small muted" style="margin:0">${doneCount} of ${s.count} done. Tap each color when you finish it.</p>
+      <p class="small muted" id="chipHint" aria-live="polite" style="margin:0">${doneCount} of ${s.count} done. Tap each color when you finish it.</p>
     </div>
     <div class="card stack" style="gap:10px">
       <div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0;flex:1">Where you are</h2>
@@ -686,6 +686,18 @@ app.addEventListener("click", async e => {
   if (act === "mark-sent") { pendingNotes().forEach(n => { n.sent = true; n.sentAt = Date.now(); }); save(); feedbackMsg = "Marked as sent. Thank you!"; return render(); }
 });
 
+// A tap on a color that isn't next: point her back to the one she's on instead of jumping ahead.
+// A tap on a color that isn't next: ask for a second tap before jumping ahead (or back) to it.
+let chipAsk = null;
+function askChip(chip, i, behind, key) {
+  chipAsk = { i, key, t: Date.now() };
+  app.querySelectorAll(".chip.ask").forEach(c => c.classList.remove("ask"));
+  chip.classList.add("ask"); chip.classList.remove("nudge"); void chip.offsetWidth; chip.classList.add("nudge");
+  const hint = document.getElementById("chipHint");
+  if (hint) hint.innerHTML = behind ? "Tap that color <b>again</b> to undo back to it."
+    : "Tap that color <b>again</b> if you've stitched everything up to it.";
+}
+
 // ---------- actions ----------
 app.addEventListener("click", e => {
   const t = e.target.closest("[data-go],[data-act],[data-mode],[data-hand],[data-chip]");
@@ -696,8 +708,13 @@ app.addEventListener("click", e => {
   if (t.dataset.mode) { prefsFor(p).mode = t.dataset.mode; save(); return render(); }
   if (t.dataset.hand) { prefsFor(p).hand = t.dataset.hand; save(); return render(); }
   if (t.dataset.chip !== undefined) {
-    const pr = progressFor(p), i = +t.dataset.chip;
-    moveTo(pr, pr.step, i < (pr.inrow || 0) ? i : i + 1); save(); return render();
+    // One tap ticks the next color (outlined) or undoes the last tick. A color further along (to catch up) or
+    // further back takes a second tap on it, so a stray tap can't fill in stitches she hasn't made yet.
+    const pr = progressFor(p), i = +t.dataset.chip, done = app.querySelectorAll(".chip.done").length;
+    const sure = chipAsk && chipAsk.i === i && chipAsk.key === location.hash + pr.step && Date.now() - chipAsk.t < 4000;
+    if (!t.classList.contains("next") && i !== done - 1 && !sure) return askChip(t, i, i < done, location.hash + pr.step);
+    chipAsk = null;
+    moveTo(pr, pr.step, i < done ? i : i + 1); save(); return render();
   }
   const act = t.dataset.act, pr = p && progressFor(p);
   if (act === "scale") return cycleScale();

@@ -31,6 +31,21 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const checks = await page.evaluate(() => { const p = BUILTIN_PATTERNS[0];
       return verifySteps(p.grid, rowSteps(p.grid, "right")) && verifySteps(p.grid, c2cSteps(p.grid)); });
     ok(checks, `${scheme}: verifySteps passes for rows and C2C`);
+    // A stray tap further along (or back) changes nothing; a second tap on it catches up (or undoes) to it.
+    {
+      await page.goto(URL + "#work/monster-duo", { waitUntil: "load" }); await page.waitForSelector('[data-chip="5"]');
+      const inrow = () => page.evaluate(() => JSON.parse(localStorage.getItem("rowbyrow.v1")).progress["monster-duo|rows|right"].inrow);
+      await page.click('[data-chip="5"]'); await wait(100);
+      const ahead = await inrow(), hint = await page.$eval("#chipHint", e => e.textContent);
+      await page.click('[data-chip="0"]'); await wait(100); const back = await inrow();
+      await page.click('[data-chip="3"]'); await wait(100); const next = await inrow();
+      await page.click('[data-chip="3"]'); await wait(100); const undo = await inrow();
+      await page.click('[data-chip="5"]'); await wait(100); await page.click('[data-chip="5"]'); await wait(100); const caught = await inrow();
+      await page.click('[data-chip="1"]'); await wait(100); await page.click('[data-chip="1"]'); await wait(100); const backTo = await inrow();
+      ok(ahead === 3 && /again/.test(hint) && back === 3 && next === 4 && undo === 3 && caught === 6 && backTo === 1,
+        `${scheme}: one tap ticks the next color; jumping ahead or back takes two taps (${ahead} ${back} ${next} ${undo} ${caught} ${backTo})`);
+      await page.goto(URL, { waitUntil: "load" });
+    }
     const pick = async file => {
       const [chooser] = await Promise.all([page.waitForFileChooser(), page.click('[data-act="new-picture"]')]);
       await chooser.accept([file]); await page.waitForSelector("#dSave"); await wait(300);
