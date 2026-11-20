@@ -46,6 +46,17 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
         `${scheme}: one tap ticks the next color; jumping ahead or back takes two taps (${ahead} ${back} ${next} ${undo} ${caught} ${backTo})`);
       await page.goto(URL, { waitUntil: "load" });
     }
+    // Light or dark under More: the opposite of the phone's setting sticks across a reload; Match phone goes back.
+    {
+      const other = scheme === "light" ? "dark" : "light", theme = () => page.evaluate(() => document.documentElement.dataset.theme);
+      await page.goto(URL + "#more", { waitUntil: "load" }); const start = await theme();
+      await page.click(`[data-theme-pick="${other}"]`); await page.reload({ waitUntil: "load" }); const picked = await theme();
+      const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+      await page.click('[data-theme-pick="system"]'); const back = await theme();
+      ok(start === scheme && picked === other && back === scheme && bg !== (scheme === "light" ? "rgb(255, 252, 246)" : "rgb(28, 25, 38)"),
+        `${scheme}: the light or dark choice sticks and Match phone goes back (${start} ${picked} ${back} ${bg})`);
+      await page.goto(URL, { waitUntil: "load" });
+    }
     const pick = async file => {
       const [chooser] = await Promise.all([page.waitForFileChooser(), page.click('[data-act="new-picture"]')]);
       await chooser.accept([file]); await page.waitForSelector("#dSave"); await wait(300);

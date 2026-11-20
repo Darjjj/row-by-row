@@ -98,7 +98,15 @@ function mix(hex, toHex, t) {
   const ch = s => Math.round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t);
   return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
 }
-const dark = () => matchMedia("(prefers-color-scheme: dark)").matches;
+const dark = () => document.documentElement.dataset.theme === "dark";
+// Light, dark or the phone's setting (index.html applies it). Per device, in its own key, so rowbyrow.v1 is untouched.
+const THEME_KEY = "rowbyrow.theme";
+function themeChoice() { try { return localStorage.getItem(THEME_KEY) || "system"; } catch (e) { return "system"; } }
+function setTheme(t) {
+  try { if (t === "system") localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch (e) {}
+  applyTheme(); render();
+}
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (themeChoice() === "system") { applyTheme(); render(); } });
 function unitWord(p, n) { const u = prefsFor(p).mode === "c2c" ? "block" : "stitch"; return n === 1 ? u : (u === "stitch" ? "stitches" : "blocks"); }
 
 // Big screens (her Galaxy Fold opened, tablets) get a wider column and bigger charts; phones are unchanged.
@@ -287,16 +295,20 @@ function renderMore() {
   const sc = data.settings.scale || 1;
   app.innerHTML = `
   <div class="screen stack">
-    <div class="topbar"><div class="title"><b style="font-size:1.5em">More</b><span>Text size, syncing and backup</span></div></div>
+    <div class="topbar"><div class="title"><b style="font-size:1.5em">More</b><span>Text size, light or dark, syncing and backup</span></div></div>
     <div class="card stack taped tape-mint">
       <div class="field-label" style="margin:0">Text size</div>
       <div class="seg" role="group" aria-label="Text size">${[[1, "Normal"], [1.15, "Bigger"], [1.3, "Biggest"]].map(([v, l]) =>
         `<button data-scale="${v}" aria-pressed="${sc === v}">${l}</button>`).join("")}</div>
       <p class="small muted" style="margin:0">The Aa button at the top of the other screens changes it too.</p>
+      <div class="field-label" style="margin:6px 0 0">Light or dark</div>
+      <div class="seg" role="group" aria-label="Light or dark">${[["system", "Match phone"], ["light", "Light"], ["dark", "Dark"]].map(([v, l]) =>
+        `<button data-theme-pick="${v}" aria-pressed="${themeChoice() === v}">${l}</button>`).join("")}</div>
     </div>
     ${syncCardHtml()}
     ${backupCardHtml()}
   </div>${tabsHtml("#more")}`;
+  app.querySelectorAll("[data-theme-pick]").forEach(b => b.onclick = () => setTheme(b.dataset.themePick));
   app.querySelectorAll("[data-scale]").forEach(b => b.onclick = () => {
     data.settings.scale = +b.dataset.scale;
     document.documentElement.style.setProperty("--scale", data.settings.scale); save(); render();
