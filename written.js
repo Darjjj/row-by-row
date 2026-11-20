@@ -156,7 +156,7 @@ function renderPiece(p, pc) {
   const st = pieceState(p, pc);
   if (!st.ready) return go(`#project/${p.id}`);
   requestWakeLock();
-  const back = `<button class="iconbtn" data-go="#project/${p.id}" aria-label="Back to the project">←</button>`;
+  const back = `<button class="iconbtn" data-go="#project/${p.id}" aria-label="Back to the project">←</button>${HOME_BTN}`;
   if (st.done) {
     app.innerHTML = `
     <div class="screen stack">

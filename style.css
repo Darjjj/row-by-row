@@ -63,10 +63,10 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outlin
 h1, h2, h3 { font-family: var(--font-head); font-weight: 700; line-height: 1.15; }
 
 .screen { max-width: var(--col); margin: 0 auto; padding: calc(env(safe-area-inset-top, 0px) + 10px) max(16px, env(safe-area-inset-right, 0px)) 108px max(16px, env(safe-area-inset-left, 0px)); }
-.topbar { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.topbar { display: flex; align-items: center; gap: 10px; min-height: 44px; min-width: 0; }   /* min-width: a long name shortens with … instead of widening the page */
 .topbar h1 { font-size: 1.6em; margin: 0; flex: 1; }
 .topbar .title { flex: 1; min-width: 0; }
-.topbar .title b { display: block; font: 700 1.06em/1.15 var(--font-head); }
+.topbar .title b { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font: 700 1.06em/1.15 var(--font-head); }
 .topbar .title span { color: var(--muted); font-size: .8em; }
 .iconbtn { min-width: 44px; height: 44px; border-radius: 13px; border: 1.5px solid var(--line); background: var(--surface); font-size: 1.05em; font-weight: 700; cursor: pointer; box-shadow: var(--shadow); color: var(--ink); }
 .iconbtn:disabled { opacity: .5; }

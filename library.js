@@ -47,7 +47,7 @@ function renderLibraryItem(it) {
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar">
-      <button class="iconbtn" data-go="#library" aria-label="Back to ready-made patterns">←</button>
+      <button class="iconbtn" data-go="#library" aria-label="Back to ready-made patterns">←</button>${HOME_BTN}
       <div class="title"><b>${esc(it.name)}</b><span>${W} × ${H} squares, ${fmt(W * H)} stitches</span></div>
       <button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>

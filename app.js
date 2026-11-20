@@ -207,6 +207,8 @@ const TAB_ICONS = {
   more: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="5" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8"/><circle cx="8" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="16" cy="12" r="1.4" fill="currentColor"/></svg>`,
   pic: `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="4" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="9.5" r="1.8" fill="currentColor"/><path d="M4.5 17l5-4.5 3.5 3 2.5-2 4 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>`,
 };
+// A house next to the back arrow on screens a step or two away from home (row screen, pieces, designs, backup).
+const HOME_BTN = `<button class="iconbtn" data-go="#home" aria-label="Home"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 11.2 12 4.5l8 6.7V19a1.5 1.5 0 0 1-1.5 1.5H15v-5.5H9v5.5H5.5A1.5 1.5 0 0 1 4 19z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>`;
 function tabsHtml(on) {
   const waiting = pendingNotes().length;
   return `<nav class="tabs" aria-label="Main"><div class="inner">${[
@@ -422,7 +424,7 @@ function renderWork(p) {
   if (pr.step >= steps.length) {
     app.innerHTML = `
     <div class="screen stack">
-      <div class="topbar"><button class="iconbtn" data-go="#pattern/${p.id}" aria-label="Back">←</button>
+      <div class="topbar"><button class="iconbtn" data-go="#pattern/${p.id}" aria-label="Back">←</button>${HOME_BTN}
         <div class="title"><b>All ${steps.length} rows done</b><span>${esc(p.name)}</span></div></div>
       <div class="card stack taped"><b style="font:800 2em/1 var(--font-head)">Finished!</b>
         <p style="margin:0">Weave in your ends, add a border if you like, and block it flat.</p>
@@ -446,7 +448,7 @@ function renderWork(p) {
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar">
-      <button class="iconbtn" data-go="#pattern/${p.id}" aria-label="Back to pattern">←</button>
+      <button class="iconbtn" data-go="#pattern/${p.id}" aria-label="Back to pattern">←</button>${HOME_BTN}
       <div class="title"><b>${esc(p.name)}</b><span>Row ${s.n} of ${steps.length} · ${c2c ? "C2C" : "Rows (sc)"}</span></div>
       ${NOTES_BTN}<button class="iconbtn" data-act="scale" aria-label="Change text size">Aa</button>
     </div>
