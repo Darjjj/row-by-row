@@ -101,6 +101,12 @@ function mix(hex, toHex, t) {
 const dark = () => matchMedia("(prefers-color-scheme: dark)").matches;
 function unitWord(p, n) { const u = prefsFor(p).mode === "c2c" ? "block" : "stitch"; return n === 1 ? u : (u === "stitch" ? "stitches" : "blocks"); }
 
+// Big screens (her Galaxy Fold opened, tablets) get a wider column and bigger charts; phones are unchanged.
+const wide = () => innerWidth >= 720;
+const colW = () => Math.min(innerWidth, wide() ? 900 : 640);   // matches --col in style.css
+// A whole chart: as wide as its box, and on a big screen no taller than most of the screen.
+const fitCell = (boxW, W, H) => Math.min(boxW / W, wide() ? innerHeight * 0.6 / H : Infinity);
+
 document.documentElement.style.setProperty("--scale", data.settings.scale || 1);
 function cycleScale() {
   const opts = [1, 1.15, 1.3];
@@ -393,7 +399,7 @@ function renderPattern(p) {
     nameBox.addEventListener("keydown", e => { if (e.key === "Enter") nameBox.blur(); });
   }
   const wrap = document.getElementById("chartWrap");
-  drawChart(document.getElementById("chart"), p, { cell: (wrap.clientWidth - 2) / W, steps, step: pr.step, inrow: pr.inrow, fade: false });
+  drawChart(document.getElementById("chart"), p, { cell: fitCell(wrap.clientWidth - 2, W, p.grid.length), steps, step: pr.step, inrow: pr.inrow, fade: false });
 }
 
 let zoomed = !!data.settings.zoom;   // remembered, so the chart opens the way she left it
@@ -414,7 +420,7 @@ function renderWork(p) {
         <button class="btn primary" data-go="#pattern/${p.id}">Done</button></div>
     </div>`;
     const wrap = document.getElementById("chartWrap");
-    drawChart(document.getElementById("chart"), p, { cell: (wrap.clientWidth - 2) / W, steps, step: steps.length });
+    drawChart(document.getElementById("chart"), p, { cell: fitCell(wrap.clientWidth - 2, W, p.grid.length), steps, step: steps.length });
     return;
   }
   const s = steps[pr.step];
@@ -459,7 +465,11 @@ function renderWork(p) {
     <button class="btn primary" data-act="next">Row ${s.n} done ✓</button>
   </div></div>`;
   const wrap = document.getElementById("chartWrap");
-  const cell = zoomed ? 16 : (wrap.clientWidth - 2) / W;
+  if (wide()) {   // a big screen: let the chart window fill the room down to the buttons
+    const top = wrap.getBoundingClientRect().top + scrollY, bar = document.querySelector(".actionbar").offsetHeight;
+    wrap.style.maxHeight = Math.round(Math.max(176, Math.min(560, innerHeight - top - bar - 70))) + "px";
+  }
+  const fit = (wrap.clientWidth - 2) / W, cell = zoomed ? Math.max(16, Math.round(fit * 1.75)) : fit;
   drawChart(document.getElementById("chart"), p, { cell, steps, step: pr.step, inrow });
   {   // a window on her spot (the start of the color she's on): scroll it into the middle, zoomed or not
     let at = 0; for (let i = 0; i < inrow; i++) at += s.runs[i].n;
@@ -955,7 +965,7 @@ const ZOOMS = [6, 8, 10, 14, 18, 24, 30];
 
 function renderEdit(p) {
   if (!editing || editing.id !== p.id) {
-    const fit = Math.floor((Math.min(innerWidth, 640) - 34) / p.grid[0].length);
+    const fit = Math.floor((colW() - 34) / p.grid[0].length);
     editing = { id: p.id, grid: p.grid.map(r => r.split("")), colors: p.colors.map(c => ({ ...c })), brush: p.colors[0].code,
       tool: "paint", cell: fit >= 12 ? Math.min(fit, 30) : 14, undo: [], dirty: false, combining: null };
   }

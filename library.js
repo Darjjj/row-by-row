@@ -34,10 +34,10 @@ function renderLibrary() {
           <span class="small muted">${it.grid[0].length} × ${it.grid.length} · ${it.colors.length} colors${libHave(it) ? ` · <span style="color:var(--done);font-weight:700">✓ Added</span>` : ""}</span>
         </button>`).join("")}</div>`).join("")}
   </div>${tabsHtml("#library")}`;
-  const cardW = (Math.min(innerWidth, 640) - 32 - 10) / 2 - 20;   // inside a card's framed thumbnail (116 px tall)
+  const box = app.querySelector(".lib-thumb"), bw = box ? box.clientWidth : 120, bh = box ? box.clientHeight : 116;   // a card's framed thumbnail
   app.querySelectorAll("[data-lib]").forEach(cv => {
     const it = libFind(cv.dataset.lib), W = it.grid[0].length, H = it.grid.length;
-    drawChart(cv, it, { cell: Math.max(1, Math.min((cardW - 28) / W, 92 / H)) });
+    drawChart(cv, it, { cell: Math.max(1, Math.min((bw - 28) / W, (bh - 24) / H)) });
   });
 }
 
@@ -66,7 +66,7 @@ function renderLibraryItem(it) {
         <span>${esc(c.name)}</span><span class="num">${fmt(counts[c.code] || 0)}</span></div>`).join("")}</div>
     </div>
   </div>`;
-  const cell = Math.max(2, Math.floor((Math.min(innerWidth, 640) - 70) / Math.max(W, H * 0.8)));
+  const cell = Math.max(2, Math.floor(Math.min((colW() - 70) / Math.max(W, H * 0.8), wide() ? innerHeight * 0.6 / H : Infinity)));
   drawChart(document.getElementById("libChart"), it, { cell });
   const add = document.getElementById("libAdd");
   if (add) add.onclick = () => {

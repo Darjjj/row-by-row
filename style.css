@@ -64,7 +64,7 @@ button { font: inherit; color: inherit; }
 button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 h1, h2, h3 { font-family: var(--font-head); font-weight: 700; line-height: 1.15; }
 
-.screen { max-width: 640px; margin: 0 auto; padding: calc(env(safe-area-inset-top, 0px) + 10px) max(16px, env(safe-area-inset-right, 0px)) 108px max(16px, env(safe-area-inset-left, 0px)); }
+.screen { max-width: var(--col); margin: 0 auto; padding: calc(env(safe-area-inset-top, 0px) + 10px) max(16px, env(safe-area-inset-right, 0px)) 108px max(16px, env(safe-area-inset-left, 0px)); }
 .topbar { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 .topbar h1 { font-size: 1.6em; margin: 0; flex: 1; }
 .topbar .title { flex: 1; min-width: 0; }
@@ -123,7 +123,7 @@ h2 { font-size: 1.1em; margin: 0 0 8px; }
 
 .chart-wrap { overflow: auto; border-radius: 10px; background: #fff; box-shadow: inset 0 0 0 1px var(--line); max-height: 62vh; }
 .chart-wrap.window { max-height: 176px; }   /* the row screen: a window on the rows around hers */
-.chart-wrap canvas { display: block; image-rendering: pixelated; }
+.chart-wrap canvas { display: block; margin: 0 auto; image-rendering: pixelated; }
 
 .key { display: grid; gap: 8px; }
 .key-row { display: grid; grid-template-columns: 26px 22px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
@@ -148,13 +148,13 @@ h2 { font-size: 1.1em; margin: 0 0 8px; }
 
 .actionbar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: 2px dashed var(--line); z-index: 5;
   padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
-.actionbar .inner { max-width: 640px; margin: 0 auto; display: grid; grid-template-columns: 1fr 2.2fr; gap: 10px; }
+.actionbar .inner { max-width: var(--col); margin: 0 auto; display: grid; grid-template-columns: 1fr 2.2fr; gap: 10px; }
 .confirm { display: grid; gap: 10px; }
 
 /* notebook tabs along the bottom (main screens only; the row screens keep the Row done bar there instead) */
 .tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--bg); border-top: 2px dashed var(--line);
   padding: 0 max(10px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(10px, env(safe-area-inset-left, 0px)); }
-.tabs .inner { max-width: 640px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; align-items: start; }
+.tabs .inner { max-width: var(--col); margin: 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; align-items: start; }
 .tabs button { border: 0; border-radius: 0 0 14px 14px; background: color-mix(in srgb, var(--tab) 62%, var(--bg)); color: var(--tab-ink); min-height: 50px; padding: 6px 2px 7px; cursor: pointer;
   display: grid; justify-items: center; align-content: center; gap: 1px; font: 700 .7em/1.1 var(--font); position: relative; }
 .tabs button svg { width: 21px; height: 21px; }
@@ -273,6 +273,14 @@ input[type="range"] { width: 100%; accent-color: var(--accent); min-height: 32px
 .lib-card b { font: 700 1.05em/1.15 var(--font-head); }
 .lib-card .small { font-size: .84em; }
 .lib-card canvas { border-radius: 4px; max-width: 100%; height: auto; }
+
+/* Big screens (her Galaxy Fold opened, tablets): use the room. Phones keep the 640 px column. app.js colW() matches. */
+:root { --col: 640px; }
+@media (min-width: 720px) {
+  :root { --col: 900px; }
+  .lib-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .lib-card .lib-thumb { height: 150px; }
+}
 
 /* more */
 .set-row { display: flex; gap: 12px; align-items: center; }
