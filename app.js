@@ -281,7 +281,7 @@ function renderHome() {
     </div>
     <input type="file" id="picFile" accept="image/*" hidden>
     ${backupDue() ? backupCardHtml() : ""}
-    ${Math.random() < 0.1 ? loveLine() : ""}
+    ${Math.random() < 0.1 ? `<div class="card love-card taped tape-pink">${loveLine()}</div>` : ""}
   </div>${tabsHtml("#home")}`;
   app.querySelectorAll("[data-thumb]").forEach(cv => {
     const p = findPattern(cv.dataset.thumb), size = cv.closest(".keep") ? 72 : 46;   // fits inside its framed thumb
@@ -1132,10 +1132,11 @@ function loveToast() {
   document.querySelectorAll(".love-toast").forEach(t => t.remove());
   const l = pickLove(), t = document.createElement("div");
   t.className = "love-toast"; t.setAttribute("role", "status");
-  t.innerHTML = `<span aria-hidden="true">♥</span> <b dir="auto">${esc(l.text)}</b><span class="small">${esc(l.sub)}</span>`;
+  t.innerHTML = `<span class="heart" aria-hidden="true">♥</span><b dir="auto">${esc(l.text)}</b><span class="small">${esc(l.sub)}</span>`
+    + [8, 26, 50, 74, 92].map((x, i) => `<i class="float" aria-hidden="true" style="left:${x}%;animation-delay:${.3 + i * .35}s">♥</i>`).join("");
   document.body.appendChild(t);
-  setTimeout(() => t.classList.add("gone"), 4500);
-  setTimeout(() => t.remove(), 5500);
+  setTimeout(() => t.classList.add("gone"), 9000);   // long enough to read, even with yarn in her hands
+  setTimeout(() => t.remove(), 10300);
 }
 let titleTaps = [];
 document.addEventListener("click", e => {
