@@ -53,6 +53,13 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       await page.click("[data-hist]"); await wait(200);
       ok(was === "23/1" && oops === "22/0" && hereRows === 1 && /Row 24/.test(first) && await place() === "23/1" &&
         await page.evaluate(() => location.hash) === "#work/monster-duo", `${scheme}: after a stray Back, History takes her back to her spot (${was} ${oops} ${await place()})`);
+      // Tapping the row screen's chart opens the whole chart; the phone's back gesture returns to the row.
+      await page.click("#chart"); await page.waitForSelector('[data-act="fullzoom"]');
+      const full = await page.evaluate(() => [location.hash, document.querySelector("#chart").getBoundingClientRect().height <= innerHeight, document.documentElement.scrollWidth <= innerWidth]);
+      await page.goBack(); await wait(200);
+      const tip = await page.evaluate(() => c2cTip(c2cSteps(BUILTIN_PATTERNS[0].grid)[59], 51, 60));
+      ok(full[0] === "#full/monster-duo" && full[1] && full[2] && await page.evaluate(() => location.hash) === "#work/monster-duo" && /top right corner.*both ends/.test(tip),
+        `${scheme}: tapping the chart shows all of it on screen, back returns, and C2C row 60 says it reaches the corner (${full})`);
       await page.goto(URL, { waitUntil: "load" });
     }
     // Light or dark under More: the opposite of the phone's setting sticks across a reload; Match phone goes back.

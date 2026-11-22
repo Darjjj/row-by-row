@@ -195,7 +195,7 @@ window.addEventListener("resize", () => {
 function render() {
   const [view, id, sub] = route();
   const p = findPattern(id);
-  if (view !== "work" && view !== "piece") releaseWakeLock();
+  if (view !== "work" && view !== "piece" && view !== "full") releaseWakeLock();
   if ((view === "pattern" || view === "work") && p) lastPlace = { view, id };
   if (view === "new" && draft) lastPlace = { view };
   if (view === "feedback") return renderFeedback();
@@ -214,6 +214,7 @@ function render() {
   if (view === "edit" && p && !p.builtIn) return renderEdit(p);
   if (view === "pattern" && p) return renderPattern(p);
   if (view === "work" && p) return renderWork(p);
+  if (view === "full" && p) return renderFull(p);
   renderHome();
 }
 
@@ -437,6 +438,46 @@ function renderPattern(p) {
   drawChart(document.getElementById("chart"), p, { cell: fitCell(wrap.clientWidth - 2, W, p.grid.length), steps, step: pr.step, inrow: pr.inrow, fade: false });
 }
 
+// The turning points of a corner to corner piece: the rows that reach a corner, and the first rows after them.
+function c2cTip(s, W, H) {
+  const t = html => `<p class="tip" style="margin:0">${html}</p>`, d = s.n;
+  const then = both => both ? "From the next row on, <b>decrease at both ends</b>." : "From the next row on, decrease on that side and keep increasing on the other.";
+  if (d === 2) return t(`<b>Before this row:</b> hold the first block in the bottom right corner so this row's new block goes along the <b>bottom edge</b>. Keep that side facing you as the front from now on.`);
+  if (d === W && d === H) return t(`This row reaches both corners: its first and last blocks are the corners. ${then(true)}`);
+  if (d === W) return t(`This row reaches the left edge: its <b>${s.start === "bottom" ? "first" : "last"} block is the bottom left corner</b>, so that end still gets a block. ${then(W > H)}`);
+  if (d === H) return t(`This row reaches the top: its <b>${s.start === "right" ? "first" : "last"} block is the top right corner</b>, so that end still gets a block. ${then(H > W)}`);
+  if (d === Math.max(W, H) + 1) return t(`Both sides have reached the edges of the chart. From here, decrease at both ends.`);
+  if (d === W + 1) return t(`The bottom has reached the left edge. From here, decrease on the left edge and keep increasing on the right edge.`);
+  if (d === H + 1) return t(`The right side has reached the top. From here, decrease along the top and keep increasing along the bottom.`);
+  return "";
+}
+
+// The whole chart, as big as the screen allows, with her row and spot marked. Opened by tapping the chart on the row screen.
+let fullZoomed = false;
+function renderFull(p) {
+  const steps = stepsFor(p), pr = progressFor(p), W = p.grid[0].length, H = p.grid.length;
+  const done = pr.step >= steps.length, s = steps[Math.min(pr.step, steps.length - 1)], inrow = done ? 0 : Math.min(pr.inrow || 0, s.runs.length);
+  requestWakeLock();
+  app.innerHTML = `
+  <div class="screen stack">
+    <div class="topbar"><button class="iconbtn" data-go="#work/${p.id}" aria-label="Back to your row">←</button>${HOME_BTN}
+      <div class="title"><b>Whole chart</b><span>${esc(p.name)} · ${done ? "Finished" : `Row ${s.n} of ${steps.length}`}</span></div>
+      <button class="pill" data-act="fullzoom">${fullZoomed ? "Zoom out" : "Zoom in"}</button></div>
+    <div class="chart-wrap" id="chartWrap"><canvas id="chart" aria-label="The whole chart with your row highlighted"></canvas></div>
+    <p class="small muted" style="margin:0">${done ? "All rows done." : "Your row is outlined in yellow. The pink dot is your spot."}</p>
+  </div>`;
+  const wrap = document.getElementById("chartWrap"), top = wrap.getBoundingClientRect().top + scrollY;
+  const room = Math.max(200, innerHeight - top - 56);
+  wrap.style.maxHeight = room + "px";
+  const fit = Math.min((wrap.clientWidth - 2) / W, (room - 2) / H), cell = fullZoomed ? Math.max(16, fit * 2.5) : fit;
+  drawChart(document.getElementById("chart"), p, { cell, steps, step: pr.step, inrow });
+  if (fullZoomed && !done) {   // zoomed in: start with her spot in the middle
+    let at = 0; for (let i = 0; i < inrow; i++) at += s.runs[i].n;
+    const [y, x] = s.cells[Math.min(at, s.cells.length - 1)];
+    wrap.scrollTop = (y + .5) * cell - wrap.clientHeight / 2; wrap.scrollLeft = (x + .5) * cell - wrap.clientWidth / 2;
+  }
+}
+
 let zoomed = !!data.settings.zoom;   // remembered, so the chart opens the way she left it
 function renderWork(p) {
   const steps = stepsFor(p), pr = progressFor(p), pf = prefsFor(p), cm = colorMap(p);
@@ -462,10 +503,7 @@ function renderWork(p) {
   const inrow = Math.min(pr.inrow || 0, s.runs.length);
   let doneCount = 0; for (let i = 0; i < inrow; i++) doneCount += s.runs[i].n;
   const c2c = pf.mode === "c2c";
-  const tip = c2c && s.n === 2
-    ? `<p class="tip" style="margin:0"><b>Before this row:</b> hold the first block in the bottom right corner so this row's new block goes along the <b>bottom edge</b>. Keep that side facing you as the front from now on.</p>`
-    : c2c && s.n === W + 1 ? `<p class="tip" style="margin:0">The bottom has reached the left edge. From here, decrease on the left edge and keep increasing on the right edge.</p>`
-    : c2c && s.n === p.grid.length + 1 ? `<p class="tip" style="margin:0">The right side has reached the top. From here, decrease at both ends.</p>` : "";
+  const tip = c2c ? c2cTip(s, W, p.grid.length) : "";
   app.innerHTML = `
   <div class="screen stack">
     <div class="topbar">
@@ -489,8 +527,8 @@ function renderWork(p) {
     <div class="card stack" style="gap:10px">
       <div style="display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap"><h2 style="margin:0;flex:1 0 auto">Where you are</h2>
         <span style="display:flex;gap:8px;margin-left:auto">${histBtn(`#history/${p.id}`)}<button class="pill" data-act="zoom">${zoomed ? "Zoom out" : "Zoom in"}</button></span></div>
-      <div class="chart-wrap window" id="chartWrap"><canvas id="chart" aria-label="Chart with this row highlighted"></canvas></div>
-      <p class="small muted" style="margin:0">${inrow >= s.runs.length ? "This row is outlined in yellow. All its colors are done." : inrow ? "The pink dot is your spot: the first stitch of the color you're on, outlined in pink." : "This row is outlined in yellow. The pink dot is where it starts."}</p>
+      <div class="chart-wrap window" id="chartWrap"><canvas id="chart" class="tap-chart" data-go="#full/${p.id}" role="button" aria-label="Chart with this row highlighted. Tap to see the whole chart."></canvas></div>
+      <p class="small muted" style="margin:0">${inrow >= s.runs.length ? "This row is outlined in yellow. All its colors are done." : inrow ? "The pink dot is your spot: the first stitch of the color you're on, outlined in pink." : "This row is outlined in yellow. The pink dot is where it starts."} Tap the chart to see all of it.</p>
     </div>
     <div class="card"><div class="key">${[...new Set(s.runs.map(r => r.k))].map(k => `
       <div class="key-row"><span class="sw" style="background:${cm[k].hex}"></span><span class="code">${esc(k)}</span><span>${esc(cm[k].name)}</span><span></span></div>`).join("")}</div></div>
@@ -815,6 +853,7 @@ app.addEventListener("click", e => {
   const act = t.dataset.act, pr = p && progressFor(p);
   if (act === "scale") return cycleScale();
   if (act === "zoom") { zoomed = data.settings.zoom = !zoomed; save(); return render(); }
+  if (act === "fullzoom") { fullZoomed = !fullZoomed; return render(); }
   if (act === "next") { moveTo(pr, pr.step + 1, 0); save(); render(); if (Math.random() < 1 / 30) loveToast(); return scrollTo(0, 0); }
   if (act === "prev") { moveTo(pr, Math.max(0, pr.step - 1), 0); save(); render(); return scrollTo(0, 0); }
   if (act === "reset-ask") { document.getElementById("resetConfirm").hidden = false; t.hidden = true; return; }
