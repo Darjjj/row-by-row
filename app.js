@@ -72,9 +72,26 @@ function progressFor(p) { return data.progress[progKey(p)] || (data.progress[pro
 // Move her place. A move backwards remembers how far along she had been (back), so sync knows
 // it was on purpose and lets it replace that place on her other devices. See newer() in sync.js.
 function moveTo(pr, step, inrow) {
+  remember(pr, pr.t || Date.now());   // the spot she's leaving (in case it never got logged, e.g. it came from sync)
   const before = Math.max(pr.step * 1000 + (pr.inrow || 0), pr.back || 0);
   pr.step = step; pr.inrow = inrow;
   if (step * 1000 + inrow < before) pr.back = before; else delete pr.back;
+  remember(pr, Date.now());
+}
+// History: every spot she's been in each pattern, so a stray tap on Back is easy to undo (see renderHistory).
+// Kept on this device only, under its own key, so the saved and synced data stay exactly as they were.
+// One entry per row: ticking colors along a row updates that row's entry instead of adding more.
+const HIST_KEY = "rowbyrow.history", HIST_MAX = 60;
+let hist = {};
+try { hist = JSON.parse(localStorage.getItem(HIST_KEY) || "{}") || {}; } catch (e) {}
+function remember(pr, t) {
+  const key = Object.keys(data.progress).find(k => data.progress[k] === pr);
+  if (!key) return;
+  const list = hist[key] || (hist[key] = []), last = list[list.length - 1], i = pr.inrow || 0;
+  if (last && last.s === pr.step) { if (last.i === i) return; last.i = i; last.t = t; }
+  else list.push({ s: pr.step, i, t });
+  if (list.length > HIST_MAX) list.splice(0, list.length - HIST_MAX);
+  try { localStorage.setItem(HIST_KEY, JSON.stringify(hist)); } catch (e) {}
 }
 const stepCache = new WeakMap();   // per pattern object, so a pattern replaced by sync gets fresh steps
 function stepsFor(p) {
@@ -186,6 +203,7 @@ function render() {
   if (view === "more") return renderMore();
   if (view === "library" && typeof LIBRARY !== "undefined") { const it = id && libFind(id); return it ? renderLibraryItem(it) : renderLibrary(); }
   if (view === "import" && id) return renderImport(id);
+  if (view === "history") return renderHistory(id, sub);
   const proj = (view === "project" || view === "piece") && findProject(id);
   if (proj) {
     const pc = view === "piece" && proj.pieces.find(x => x.id === sub);
@@ -209,6 +227,8 @@ const TAB_ICONS = {
 };
 // A house next to the back arrow on screens a step or two away from home (row screen, pieces, designs, backup).
 const HOME_BTN = `<button class="iconbtn" data-go="#home" aria-label="Home"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 11.2 12 4.5l8 6.7V19a1.5 1.5 0 0 1-1.5 1.5H15v-5.5H9v5.5H5.5A1.5 1.5 0 0 1 4 19z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>`;
+const CLOCK_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6M3.5 4v4h4M12 7.5V12l3 2"/></svg>`;
+const histBtn = (hash, cls = "pill") => `<button class="${cls} hist-btn" data-go="${hash}">${CLOCK_SVG}History</button>`;
 function tabsHtml(on) {
   const waiting = pendingNotes().length;
   return `<nav class="tabs" aria-label="Main"><div class="inner">${[
@@ -360,6 +380,7 @@ function renderPattern(p) {
         <button class="iconbtn" data-act="jump" style="padding:0 14px">Go</button>
       </div>
       <p class="small" id="jumpMsg" hidden></p>
+      ${(hist[progKey(p)] || []).length ? histBtn(`#history/${p.id}`, "btn quiet") : ""}
     </div>
     <div class="card">
       <h2>Yarn</h2>
@@ -466,8 +487,8 @@ function renderWork(p) {
       <p class="small muted" id="chipHint" aria-live="polite" style="margin:0">${doneCount} of ${s.count} done. Tap each color when you finish it.</p>
     </div>
     <div class="card stack" style="gap:10px">
-      <div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0;flex:1">Where you are</h2>
-        <button class="pill" data-act="zoom">${zoomed ? "Zoom out" : "Zoom in"}</button></div>
+      <div style="display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap"><h2 style="margin:0;flex:1 0 auto">Where you are</h2>
+        <span style="display:flex;gap:8px;margin-left:auto">${histBtn(`#history/${p.id}`)}<button class="pill" data-act="zoom">${zoomed ? "Zoom out" : "Zoom in"}</button></span></div>
       <div class="chart-wrap window" id="chartWrap"><canvas id="chart" aria-label="Chart with this row highlighted"></canvas></div>
       <p class="small muted" style="margin:0">${inrow >= s.runs.length ? "This row is outlined in yellow. All its colors are done." : inrow ? "The pink dot is your spot: the first stitch of the color you're on, outlined in pink." : "This row is outlined in yellow. The pink dot is where it starts."}</p>
     </div>
@@ -490,6 +511,57 @@ function renderWork(p) {
     const [y, x] = s.cells[Math.min(at, s.cells.length - 1)];
     wrap.scrollTop = (y + .5) * cell - wrap.clientHeight / 2; wrap.scrollLeft = (x + .5) * cell - wrap.clientWidth / 2;
   }
+}
+
+// ---------- history: where she's been, newest first, each with a way back ----------
+function whenLabel(t) {
+  if (!t) return "";
+  const d = new Date(t), day0 = x => new Date(x).setHours(0, 0, 0, 0), days = Math.round((day0(Date.now()) - day0(t)) / 864e5);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return (days === 0 ? "Today" : days === 1 ? "Yesterday" : d.toLocaleDateString([], { weekday: days < 7 ? "long" : undefined, month: "short", day: "numeric" })) + ", " + time;
+}
+function renderHistory(id, sub) {
+  let pr, key, back, name, say;   // say(step, inrow) -> [main line, detail]
+  if (sub) {   // a piece of a written pattern
+    const proj = findProject(id), pc = proj && proj.pieces.find(x => x.id === sub), st = pc && pieceState(proj, pc);
+    if (!st || !st.ready) return go(proj ? `#project/${id}` : "#home");
+    pr = st.pr; key = pieceKey(proj, pc); back = `#piece/${id}/${sub}`; name = `${pc.name} · ${proj.name}`;
+    say = s => {
+      if (s >= pc.count * st.n) return [pc.count > 1 ? `All ${pc.count} made` : "Made", ""];
+      const x = st.steps[s % st.n], what = x.label || `Step ${s % st.n + 1}`;
+      return [(pc.count > 1 ? `Number ${Math.floor(s / st.n) + 1}: ` : "") + what, x.part || (x.label ? "" : x.text)];
+    };
+  } else {
+    const p = findPattern(id);
+    if (!p) return go("#home");
+    const steps = stepsFor(p);
+    pr = progressFor(p); key = progKey(p); back = `#work/${id}`; name = p.name;
+    say = (s, i) => {
+      if (s >= steps.length) return ["Finished", `All ${steps.length} rows done`];
+      const n = steps[s].runs.length, k = Math.min(i, n);
+      return [`Row ${steps[s].n}`, k >= n ? "All its colors done" : k ? `${k} of ${n} colors done` : "At the start of the row"];
+    };
+  }
+  const list = hist[key] || [], newest = list.length - 1;
+  const here = j => j === newest && list[j].s === pr.step && list[j].i === (pr.inrow || 0);
+  const rows = list.map((e, j) => j).reverse().map(j => {
+    const [main, detail] = say(list[j].s, list[j].i), now = here(j);
+    return `<div class="hist-row ${now ? "now" : ""}"><span><b>${esc(main)}</b>${detail ? `<span class="small">${esc(detail)}</span>` : ""}
+      <span class="small muted">${whenLabel(list[j].t)}</span></span>
+      ${now ? `<span class="hist-here">You're here</span>` : `<button class="pill" data-hist="${j}">Go back here</button>`}</div>`;
+  }).join("");
+  app.innerHTML = `
+  <div class="screen stack">
+    <div class="topbar"><button class="iconbtn" data-go="${back}" aria-label="Back">←</button>${HOME_BTN}
+      <div class="title"><b>History</b><span>${esc(name)}</span></div></div>
+    <p class="small muted" style="margin:0">Every spot you've been in this pattern on this device, newest first.
+      Tapped something by mistake? Find where you were and tap <b>Go back here</b>.</p>
+    <div class="card hist-list">${rows || `<p class="muted" style="margin:12px 0">Nothing here yet. Each row you finish shows up here.</p>`}</div>
+  </div>`;
+  app.querySelectorAll("[data-hist]").forEach(b => b.onclick = () => {
+    const e = list[+b.dataset.hist];
+    moveTo(pr, e.s, e.i); save(); go(back); scrollTo(0, 0);
+  });
 }
 
 // ---------- sync card + hooks used by sync.js ----------

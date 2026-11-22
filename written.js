@@ -185,6 +185,7 @@ function renderPiece(p, pc) {
     </div>
     ${nxt ? `<p class="small muted" style="margin:0">Next${nxt.part !== s.part ? ` (${esc(nxt.part)})` : ""}: ${nxt.label ? esc(nxt.label) + " · " : ""}${esc(nxt.text)}${nxt.sts ? ` (${nxt.sts})` : ""}</p>`
       : pc.count > st.made + 1 ? `<p class="small muted" style="margin:0">That's the last step. Then number ${st.made + 2} starts from the beginning.</p>` : ""}
+    <div style="display:flex;justify-content:flex-end">${histBtn(`#history/${p.id}/${pc.id}`)}</div>
     <details class="card"><summary><b>All steps</b></summary>
       <ol class="step-list">${st.steps.map((x, j) => `
         <li class="${j < st.i ? "past" : ""} ${j === st.i ? "now" : ""}"><button class="linkbtn" data-wjump="${j}">

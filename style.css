@@ -272,6 +272,16 @@ input[type="range"] { width: 100%; accent-color: var(--accent); min-height: 32px
 
 /* ready-made patterns */
 .pill { flex: none; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 0 15px; min-height: 40px; font-weight: 700; font-size: .88em; cursor: pointer; }
+.hist-btn { display: inline-flex; align-items: center; gap: 6px; }
+.hist-btn svg { flex: none; }
+.btn.hist-btn { justify-content: center; }
+.hist-list { display: grid; padding-top: 4px; padding-bottom: 4px; }
+.hist-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.hist-row:first-child { border-top: 0; }
+.hist-row > span:first-child { flex: 1; min-width: 0; display: grid; gap: 2px; overflow-wrap: anywhere; }
+.hist-row b { font: 700 1.1em/1.2 var(--font-head); }
+.hist-row.now b, .hist-here { color: var(--accent); }
+.hist-here { font-weight: 700; font-size: .88em; white-space: nowrap; padding: 0 6px; }
 .pill[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .lib-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .lib-card { display: grid; gap: 4px; align-content: start; text-align: left; padding: 10px; cursor: pointer; font: inherit; color: var(--ink); }

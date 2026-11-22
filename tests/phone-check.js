@@ -44,6 +44,15 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       await page.click('[data-chip="1"]'); await wait(100); await page.click('[data-chip="1"]'); await wait(100); const backTo = await inrow();
       ok(ahead === 3 && /again/.test(hint) && back === 3 && next === 4 && undo === 3 && caught === 6 && backTo === 1,
         `${scheme}: one tap ticks the next color; jumping ahead or back takes two taps (${ahead} ${back} ${next} ${undo} ${caught} ${backTo})`);
+      // Back by mistake: History lists where she was, and Go back here puts her there again.
+      const place = () => page.evaluate(() => { const p = JSON.parse(localStorage.getItem("rowbyrow.v1")).progress["monster-duo|rows|right"]; return p.step + "/" + p.inrow; });
+      await page.click('[data-act="next"]'); await wait(100); await page.click('[data-chip="0"]'); await wait(100); const was = await place();
+      await page.click('[data-act="prev"]'); await wait(100); const oops = await place();
+      await page.click('[data-go="#history/monster-duo"]'); await page.waitForSelector("[data-hist]");
+      const hereRows = await page.$$eval(".hist-row.now", r => r.length), first = await page.$eval("[data-hist]", b => b.closest(".hist-row").innerText);
+      await page.click("[data-hist]"); await wait(200);
+      ok(was === "23/1" && oops === "22/0" && hereRows === 1 && /Row 24/.test(first) && await place() === "23/1" &&
+        await page.evaluate(() => location.hash) === "#work/monster-duo", `${scheme}: after a stray Back, History takes her back to her spot (${was} ${oops} ${await place()})`);
       await page.goto(URL, { waitUntil: "load" });
     }
     // Light or dark under More: the opposite of the phone's setting sticks across a reload; Match phone goes back.
