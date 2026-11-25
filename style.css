@@ -238,6 +238,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); min-height: 32px
 .love > span[aria-hidden] { font-size: 1.3em; }
 .love-card { background: var(--warm-soft); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--warm) 45%, transparent); padding: 18px 16px; }
 .love .small { color: var(--muted); font-size: .8em; }
+.pill.love-say { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--warm); border-color: color-mix(in srgb, var(--warm) 40%, transparent); }
+.love.can-say, .love:has(.love-say:not([hidden])) { cursor: pointer; }
+.love-toast.can-say { pointer-events: auto; cursor: pointer; }
+.love-toast .love-say { margin-top: 6px; }
+.speaking .pill.love-say { background: var(--warm); color: var(--warm-soft); border-color: var(--warm); }
 .love-toast { position: fixed; left: 50%; bottom: calc(112px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%) rotate(-1.5deg);
   width: max-content; max-width: min(92vw, 480px); background: var(--warm-soft); color: var(--warm); border: 2.5px solid var(--warm); border-radius: 18px;
   padding: 16px 26px 18px; text-align: center; box-shadow: 0 16px 30px -12px rgba(0, 0, 0, .45);

@@ -270,6 +270,23 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     await page.screenshot({ path: OUT + "love-toast.png" });
     const all = await page.evaluate(() => LOVE.map(() => loveLine()).every(h => /♥/.test(h)) && LOVE.length);
     ok(all >= 20, `${all} languages render`);
+    {   // Hear it: read in that language's voice; no button for a language the phone can't speak (stand-in voices here)
+      const r = await page.evaluate(() => {
+        const fake = [{ lang: "en-US" }, { lang: "fr-FR" }, { lang: "ja_JP" }];
+        speechSynthesis.getVoices = () => fake; speechSynthesis.cancel = () => {};
+        speechSynthesis.speak = u => { window._said = [u.text, u.lang]; };
+        window.SpeechSynthesisUtterance = function (t) { this.text = t; };
+        loadVoices();
+        const at = l => LOVE.findIndex(x => x[0] === l), box = document.createElement("div"); document.body.appendChild(box);
+        const line = l => { lastLove = -1; const real = Math.random; Math.random = () => (at(l) + .5) / LOVE.length;
+          try { box.innerHTML = loveLine(); } finally { Math.random = real; } return box.querySelector(".love-say"); };
+        const fr = line("French"); fr.click(); const said = window._said;
+        const ja = line("Japanese"), haw = line("Hawaiian"); box.remove();
+        return { frShown: !fr.hidden, said, jaShown: !ja.hidden, hawHidden: haw.hidden };
+      });
+      ok(r.frShown && r.said && r.said[0] === "Je t'aime, maman" && r.said[1] === "fr-FR" && r.jaShown && r.hawHidden,
+        `tapping Hear it reads the note in its own language, and it's hidden without a voice (${JSON.stringify(r)})`);
+    }
     await page.evaluate(() => { const d = JSON.parse(localStorage.getItem("rowbyrow.v1")); d.progress["monster-duo|rows|right"] = { step: 60, inrow: 0, t: Date.now() };
       localStorage.setItem("rowbyrow.v1", JSON.stringify(d)); });
     await page.goto(URL + "#work/monster-duo", { waitUntil: "load" }); await page.reload({ waitUntil: "load" });

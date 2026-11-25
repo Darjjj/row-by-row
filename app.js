@@ -1230,26 +1230,74 @@ const LOVE = [
   ["Japanese", "お母さん、大好きだよ", "Okāsan, daisuki da yo"], ["Korean", "엄마, 사랑해요", "Eomma, saranghaeyo"],
   ["Chinese", "妈妈，我爱你", "Māma, wǒ ài nǐ"], ["Arabic", "أحبك يا أمي", "Uḥibbuki yā ummī"]
 ];
+// The language each note is read aloud in (the phone's own voices; first match wins).
+const LOVE_VOICE = { English: ["en-US", "en"], Spanish: ["es-ES", "es-US", "es"], French: ["fr-FR", "fr"], Italian: ["it-IT", "it"],
+  German: ["de-DE", "de"], Portuguese: ["pt-BR", "pt-PT", "pt"], Dutch: ["nl-NL", "nl"], Swedish: ["sv-SE", "sv"], Norwegian: ["nb-NO", "no", "nb", "nn"],
+  Danish: ["da-DK", "da"], Finnish: ["fi-FI", "fi"], Polish: ["pl-PL", "pl"], Irish: ["ga-IE", "ga"], Welsh: ["cy-GB", "cy"], Hawaiian: ["haw-US", "haw"],
+  Tagalog: ["fil-PH", "fil", "tl"], Swahili: ["sw-KE", "sw-TZ", "sw"], Turkish: ["tr-TR", "tr"], Vietnamese: ["vi-VN", "vi"], Greek: ["el-GR", "el"],
+  Russian: ["ru-RU", "ru"], Japanese: ["ja-JP", "ja"], Korean: ["ko-KR", "ko"], Chinese: ["zh-CN", "cmn-CN", "zh"], Arabic: ["ar-SA", "ar-EG", "ar"] };
 let lastLove = -1;
 function pickLove() {
   let i; do { i = Math.floor(Math.random() * LOVE.length); } while (i === lastLove && LOVE.length > 1);
   lastLove = i;
   const [lang, text, say] = LOVE[i];
-  return { text, sub: lang === "English" ? "English" : `${lang} · ${say ? say + " · " : ""}I love you, Momma` };
+  return { i, text, sub: lang === "English" ? "English" : `${lang} · ${say ? say + " · " : ""}I love you, Momma` };
 }
+// Read a note aloud: tap it (or Hear it). Hidden for a language the phone has no voice for, so it's never read in the wrong accent.
+let voices = [];
+const norm = l => String(l).replace(/_/g, "-").toLowerCase();
+function voiceFor(i) {
+  const want = LOVE_VOICE[LOVE[i][0]] || [];
+  for (const c of want) { const v = voices.find(v => norm(v.lang) === c.toLowerCase()); if (v) return v; }
+  for (const c of want) { const v = voices.find(v => norm(v.lang).split("-")[0] === c.split("-")[0].toLowerCase()); if (v) return v; }
+  return null;
+}
+function loadVoices() {
+  try { voices = speechSynthesis.getVoices() || []; } catch (e) { voices = []; }
+  document.querySelectorAll("[data-say]").forEach(el => {
+    const ok = !!voiceFor(+el.dataset.say);
+    if (el.classList.contains("love-say")) el.hidden = !ok; else el.classList.toggle("can-say", ok);
+  });
+}
+if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.addEventListener("voiceschanged", loadVoices); }
+const SPEAKER_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" fill-opacity=".2"/><path d="M15.5 9a4 4 0 0 1 0 6M18.2 6.5a7.5 7.5 0 0 1 0 11"/></svg>`;
+const sayBtn = i => `<button class="pill love-say" data-say="${i}" ${voiceFor(i) ? "" : "hidden"}>${SPEAKER_SVG}Hear it</button>`;
+function sayLove(i, host) {
+  const v = voiceFor(i);
+  if (!v) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(LOVE[i][1]);
+  u.voice = v; u.lang = v.lang; u.rate = .9;
+  const toast = host && host.classList.contains("love-toast") ? host : null;
+  if (toast) toastLife(toast, 60000);   // stays up while it talks
+  host && host.classList.add("speaking");
+  u.onend = u.onerror = () => { host && host.classList.remove("speaking"); if (toast) toastLife(toast, 4000); };
+  speechSynthesis.speak(u);
+}
+document.addEventListener("click", e => {
+  const el = e.target.closest("[data-say]");
+  if (!el || !("speechSynthesis" in window)) return;
+  sayLove(+el.dataset.say, el.closest(".love, .love-toast"));
+});
 function loveLine() {
   const l = pickLove();
-  return `<p class="love"><span aria-hidden="true">♥</span> <b dir="auto">${esc(l.text)}</b><br><span class="small">${esc(l.sub)}</span></p>`;
+  return `<div class="love" data-say="${l.i}"><span aria-hidden="true">♥</span> <b dir="auto">${esc(l.text)}</b><br><span class="small">${esc(l.sub)}</span>
+    <br>${sayBtn(l.i)}</div>`;
+}
+function toastLife(t, ms) {
+  clearTimeout(t._gone); clearTimeout(t._rm); t.classList.remove("gone");
+  t._gone = setTimeout(() => t.classList.add("gone"), ms);
+  t._rm = setTimeout(() => t.remove(), ms + 1300);
 }
 function loveToast() {
   document.querySelectorAll(".love-toast").forEach(t => t.remove());
   const l = pickLove(), t = document.createElement("div");
-  t.className = "love-toast"; t.setAttribute("role", "status");
+  t.className = "love-toast" + (voiceFor(l.i) ? " can-say" : ""); t.setAttribute("role", "status"); t.dataset.say = l.i;
   t.innerHTML = `<span class="heart" aria-hidden="true">♥</span><b dir="auto">${esc(l.text)}</b><span class="small">${esc(l.sub)}</span>`
+    + `<span>${sayBtn(l.i)}</span>`
     + [8, 26, 50, 74, 92].map((x, i) => `<i class="float" aria-hidden="true" style="left:${x}%;animation-delay:${.3 + i * .35}s">♥</i>`).join("");
   document.body.appendChild(t);
-  setTimeout(() => t.classList.add("gone"), 9000);   // long enough to read, even with yarn in her hands
-  setTimeout(() => t.remove(), 10300);
+  toastLife(t, 9000);   // long enough to read, even with yarn in her hands
 }
 let titleTaps = [];
 document.addEventListener("click", e => {
