@@ -263,10 +263,11 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 
     // Little hidden notes: three quick taps on the title, the finished screen, and every language renders.
     await page.goto(URL + "#home", { waitUntil: "load" }); await page.waitForSelector("#appTitle");
-    for (let i = 0; i < 3; i++) await page.click("#appTitle");
+    for (let i = 0; i < 3; i++) await page.tap("#appTitle");   // real touch taps, as on her phone
     await wait(300);
     const toast = await page.evaluate(() => (document.querySelector(".love-toast") || {}).textContent || "");
-    ok(/♥/.test(toast) && /Momma|English/.test(toast), `three taps on the title show a note (${toast.replace(/\s+/g, " ").trim().slice(0, 60)})`);
+    const picked = await page.evaluate(() => getSelection().toString() + getComputedStyle(document.querySelector(".hello")).userSelect);
+    ok(/♥/.test(toast) && /Momma|English/.test(toast) && picked === "none", `three quick taps on the title show a note, without selecting the words (${toast.replace(/\s+/g, " ").trim().slice(0, 60)})`);
     await page.screenshot({ path: OUT + "love-toast.png" });
     const all = await page.evaluate(() => LOVE.map(() => loveLine()).every(h => /♥/.test(h)) && LOVE.length);
     ok(all >= 20, `${all} languages render`);

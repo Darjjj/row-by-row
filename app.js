@@ -1299,11 +1299,13 @@ function loveToast() {
   document.body.appendChild(t);
   toastLife(t, 9000);   // long enough to read, even with yarn in her hands
 }
+// Three quick taps on the greeting ("Hi Momma" / "My crochet journal") show a note. Counted when her finger touches
+// down, not on click: on a phone, quick repeated taps on text turn into text selection and the clicks get lost.
 let titleTaps = [];
-document.addEventListener("click", e => {
-  if (e.target.id !== "appTitle") return;
-  const now = Date.now(); titleTaps = titleTaps.filter(t => now - t < 1200).concat(now);
-  if (titleTaps.length >= 3) { titleTaps = []; loveToast(); }
+document.addEventListener("pointerdown", e => {
+  if (!e.isPrimary || !e.target.closest || !e.target.closest(".hello")) return;
+  const now = Date.now(); titleTaps = titleTaps.filter(t => now - t < 1500).concat(now);
+  if (titleTaps.length >= 3) { titleTaps = []; try { getSelection().removeAllRanges(); } catch (err) {} loveToast(); }
 });
 
 // ---------- keep the screen on while crocheting ----------
